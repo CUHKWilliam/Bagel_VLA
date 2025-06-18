@@ -66,6 +66,363 @@ from lerobot.common.policies.pi0.paligemma_with_expert import (
 )
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import get_safe_dtype
+from lerobot.common.policies.pi0.dataset_base import PackedDataset, SimpleCustomBatch
+from .modeling.qwen2 import Qwen2Tokenizer
+from .modeling.bagel.qwen2_navit import NaiveCache
+from lerobot.common.utils.data_utils import add_special_tokens
+from dataclasses import dataclass, field
+from transformers import HfArgumentParser
+from .modeling.qwen2 import Qwen2Config
+from .modeling.bagel import (
+    BagelConfig, Bagel, Qwen2Config, Qwen2ForCausalLM, SiglipVisionConfig, SiglipVisionModel
+)
+from .modeling.autoencoder import load_ae
+from lerobot.common.utils.fsdp_utils import (
+    FSDPCheckpoint, FSDPConfig, grad_checkpoint_check_fn, fsdp_wrapper, 
+    fsdp_ema_setup, fsdp_ema_update,
+)
+import os
+from copy import deepcopy
+from lerobot.common.utils.train_utils import create_logger, get_latest_ckpt
+import torch.distributed as dist
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointImpl,
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+)
+import functools
+import yaml
+import numpy as np
+import torch
+import cv2
+
+@dataclass
+class DataArguments:
+    dataset_config_file: str = field(
+        default="data/configs/example.yaml",
+        metadata={"help": "YAML file specifying dataset groups, weights, and preprocessing rules."}
+    )
+    prefetch_factor: int = field(
+        default=2,
+        metadata={"help": "How many batches each DataLoader worker pre-loads in advance."}
+    )
+    num_workers: int = field(
+        default=1,
+        metadata={"help": "Number of background workers for the PyTorch DataLoader."}
+    )
+    max_num_tokens_per_sample: int = field(
+        # default=16384,
+        default=5000,
+        metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
+    )
+    max_num_tokens: int = field(
+        # default=36864
+        default=10000,
+        metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
+    )
+    prefer_buffer_before: int = field(
+        default=16384,
+        metadata={"help": "While batch length is below this, pop from the overflow buffer before new sampling."}
+    )
+    max_buffer_size: int = field(
+        default=50,
+        metadata={"help": "Maximum number of oversized samples kept in the overflow buffer."}
+    )
+    data_seed: int = field(
+        default=42,
+        metadata={"help": "Seed used when shuffling / sampling data shards to ensure reproducibility."}
+    )
+@dataclass
+class ModelArguments:
+    model_path: str = field(
+        default="/home/wltang/lerobot/weight/BAGEL-7B-MoT",
+        metadata={"help": "Path of the pretrained BAGEL model."}
+    )
+    llm_path: str = field(
+        default="hf/Qwen2.5-0.5B-Instruct/",
+        metadata={"help": "Path or HuggingFace repo ID of the pretrained Qwen2-style language model."}
+    )
+    llm_qk_norm: bool = field(
+        default=True,
+        metadata={"help": "Enable QK LayerNorm (qk_norm) inside the attention blocks."}
+    )
+    tie_word_embeddings: bool = field(
+        default=False,
+        metadata={"help": "Share input and output word embeddings (tied embeddings)."}
+    )
+    layer_module: str = field(
+        default="Qwen2MoTDecoderLayer",
+        metadata={"help": "Python class name of the decoder layer to instantiate."}
+    )
+    vae_path: str = field(
+        default="ffxvs/vae-flux/ae.safetensors",
+        metadata={"help": "Path to the pretrained VAE checkpoint for latent-space image generation."}
+    )
+    vit_path: str = field(
+        default="hf/siglip-so400m-14-980-flash-attn2-navit/",
+        metadata={"help": "Path or repo ID of the SigLIP Vision Transformer used for image understanding."}
+    )
+    max_latent_size: int = field(
+        default=32,
+        metadata={"help": "Maximum latent grid size (patches per side) for the VAE latent tensor."}
+    )
+    latent_patch_size: int = field(
+        default=2,
+        metadata={"help": "Spatial size (in VAE pixels) covered by each latent patch."}
+    )
+    vit_patch_size: int = field(
+        default=14,
+        metadata={"help": "Patch size (pixels) for the Vision Transformer encoder."}
+    )
+    vit_max_num_patch_per_side: int = field(
+        default=70,
+        metadata={"help": "Maximum number of ViT patches along one image side after cropping / resize."}
+    )
+    connector_act: str = field(
+        default="gelu_pytorch_tanh",
+        metadata={"help": "Activation function used in the latent-to-text connector MLP."}
+    )
+    interpolate_pos: bool = field(
+        default=False,
+        metadata={"help": "Interpolate positional embeddings when image resolution differs from pre-training."}
+    )
+    vit_select_layer: int = field(
+        default=-2,
+        metadata={"help": "Which hidden layer of the ViT to take as the visual feature (negative = from the end)."}
+    )
+    vit_rope: bool = field(
+        default=False,
+        metadata={"help": "Replace ViT positional encodings with RoPE."}
+    )
+
+    text_cond_dropout_prob: float = field(
+        default=0.1,
+        metadata={"help": "Probability of dropping text embeddings during training."}
+    )
+    vae_cond_dropout_prob: float = field(
+        default=0.3,
+        metadata={"help": "Probability of dropping VAE latent inputs during training."}
+    )
+    vit_cond_dropout_prob: float = field(
+        default=0.3,
+        metadata={"help": "Probability of dropping ViT visual features during training."}
+    )
+@dataclass
+class TrainingArguments:
+    # --- modality switches ---
+    visual_gen: bool = field(
+        default=True,
+        metadata={"help": "Train image generation branch."}
+    )
+    visual_und: bool = field(
+        default=True,
+        metadata={"help": "Train image understanding branch."}
+    )
+
+    # --- bookkeeping & logging ---
+    results_dir: str = field(
+        default="results",
+        metadata={"help": "Root directory for logs."}
+    )
+    checkpoint_dir: str = field(
+        default="ckpts",
+        metadata={"help": "Root directory for model checkpoints."}
+    )
+    wandb_project: str = field(
+        default="bagel",
+        metadata={"help": "Weights & Biases project name."}
+    )
+    wandb_name: str = field(
+        default="run",
+        metadata={"help": "Name shown in the Weights & Biases UI for this run."}
+    )
+    wandb_runid: str = field(
+        default="0",
+        metadata={"help": "Unique identifier to resume a previous W&B run, if desired."}
+    )
+    wandb_resume: str = field(
+        default="allow",
+        metadata={"help": "W&B resume mode: 'allow', 'must', or 'never'."}
+    )
+    wandb_offline: bool = field(
+        default=False,
+        metadata={"help": "Run W&B in offline mode (logs locally, sync later)."}
+    )
+
+    # --- reproducibility & resume ---
+    global_seed: int = field(
+        default=4396,
+        metadata={"help": "Base random seed; actual seed is offset by rank for DDP."}
+    )
+    auto_resume: bool = field(
+        default=True,
+        metadata={"help": "Automatically pick up the latest checkpoint found in checkpoint_dir."}
+    )
+    resume_from: str = field(
+        default="/home/wltang/lerobot/weight/BAGEL-7B-MoT",
+        metadata={"help": "Explicit checkpoint path to resume from (overrides auto_resume)." }
+    )
+    resume_model_only: bool = field(
+        default=True,
+        metadata={"help": "Load only model weights, ignoring optimizer/scheduler states."}
+    )
+    finetune_from_ema: bool = field(
+        default=True,
+        metadata={"help": "When resume_model_only=True, load the EMA (exponential moving average) weights instead of raw weights."}
+    )
+    finetune_from_hf: bool = field(
+        default=True,
+        metadata={"help": "Whether finetune from HugginFace model."}
+    )
+
+    # --- reporting frequency ---
+    log_every: int = field(
+        default=10,
+        metadata={"help": "Print / log every N training steps."}
+    )
+    save_every: int = field(
+        default=2000,
+        metadata={"help": "Save a checkpoint every N training steps."}
+    )
+    total_steps: int = field(
+        default=500_000,
+        metadata={"help": "Total number of optimizer steps to train for."}
+    )
+
+    # --- optimization & scheduler ---
+    warmup_steps: int = field(
+        default=2000,
+        metadata={"help": "Linear warm-up steps before applying the main LR schedule."}
+    )
+    lr_scheduler: str = field(
+        default="constant",
+        metadata={"help": "Type of LR schedule: 'constant' or 'cosine'."}
+    )
+    lr: float = field(
+        default=1e-4,
+        metadata={"help": "Peak learning rate after warm-up."}
+    )
+    min_lr: float = field(
+        default=1e-7,
+        metadata={"help": "Minimum learning rate for cosine schedule (ignored for constant)."}
+    )
+    beta1: float = field(
+        default=0.9,
+        metadata={"help": "AdamW β₁ coefficient."}
+    )
+    beta2: float = field(
+        default=0.95,
+        metadata={"help": "AdamW β₂ coefficient."}
+    )
+    eps: float = field(
+        default=1e-15,
+        metadata={"help": "AdamW ε for numerical stability."}
+    )
+    ema: float = field(
+        default=0.9999,
+        metadata={"help": "Decay rate for the exponential moving average of model weights."}
+    )
+    max_grad_norm: int = field(
+        default=1.0,
+        metadata={"help": "Gradient clipping threshold (L2 norm)."}
+    )
+    timestep_shift: float = field(
+        default=1.0,
+        metadata={"help": "Shift applied to diffusion timestep indices (for latent prediction)."}
+    )
+    mse_weight: float = field(
+        default=1.0,
+        metadata={"help": "Scaling factor for the image-reconstruction MSE loss term."}
+    )
+    ce_weight: float = field(
+        default=1.0,
+        metadata={"help": "Scaling factor for the language cross-entropy loss term."}
+    )
+    ce_loss_reweighting: bool = field(
+        default=False,
+        metadata={"help": "Reweight CE loss by token importance (provided via ce_loss_weights)."}
+    )
+    expected_num_tokens: int = field(
+        default=32768,
+        metadata={"help": "Soft target token count; yield the batch once it reaches or exceeds this size."}
+    )
+
+    # --- distributed training / FSDP ---
+    num_replicate: int = field(
+        default=1,
+        metadata={"help": "Number of model replicas per GPU rank for tensor parallelism."}
+    )
+    num_shard: int = field(
+        default=8,
+        metadata={"help": "Number of parameter shards when using FSDP HYBRID_SHARD."}
+    )
+    sharding_strategy: str = field(
+        default="FULL_SHARD",
+        metadata={"help": "FSDP sharding strategy: FULL_SHARD, SHARD_GRAD_OP, HYBRID_SHARD, etc."}
+    )
+    backward_prefetch: str = field(
+        default="BACKWARD_PRE",
+        metadata={"help": "FSDP backward prefetch strategy (BACKWARD_PRE or NO_PREFETCH)."}
+    )
+    cpu_offload: bool = field(
+        default=True,
+        metadata={"help": "Enable FSDP parameter offload to CPU."}
+    )
+
+    # --- module freezing ---
+    freeze_llm: bool = field(
+        default=False,
+        metadata={"help": "Keep language-model weights fixed (no gradient updates)."}
+    )
+    freeze_vit: bool = field(
+        default=False,
+        metadata={"help": "Keep ViT weights fixed during training."}
+    )
+    freeze_vae: bool = field(
+        default=True,
+        metadata={"help": "Keep VAE weights fixed; only predict latents, don’t fine-tune encoder/decoder."}
+    )
+    freeze_und: bool = field(
+        default=False,
+        metadata={"help": "Freeze the visual understanding connector layers."}
+    )
+    copy_init_moe: bool = field(
+        default=True,
+        metadata={"help": "Duplicate initial MoE experts so each has identical initialisation."}
+    )
+    use_flex: bool = field(
+        default=True,
+        metadata={"help": "Enable FLEX (flash-ext friendly) packing algorithm for sequence data."}
+    )
+assert torch.cuda.is_available()
+dist.init_process_group("nccl")
+device = dist.get_rank() % torch.cuda.device_count()
+torch.cuda.set_device(device)
+
+parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
+model_args, data_args, training_args, _ = parser.parse_args_into_dataclasses(return_remaining_strings=True)
+
+
+class DataConfig:
+    def __init__(
+        self, 
+        grouped_datasets, 
+        text_cond_dropout_prob=0.1,
+        vit_cond_dropout_prob=0.4,
+        vae_cond_dropout_prob=0.1,
+        vae_image_downsample=16,
+        max_latent_size=32,
+        vit_patch_size=14,
+        max_num_patch_per_side=70,
+    ):
+        self.grouped_datasets = grouped_datasets
+        self.text_cond_dropout_prob = text_cond_dropout_prob
+        self.vit_cond_dropout_prob = vit_cond_dropout_prob
+        self.vit_patch_size = vit_patch_size
+        self.max_num_patch_per_side = max_num_patch_per_side
+        self.vae_cond_dropout_prob = vae_cond_dropout_prob
+        self.vae_image_downsample = vae_image_downsample
+        self.max_latent_size = max_latent_size
 
 
 def create_sinusoidal_pos_embedding(
@@ -306,17 +663,16 @@ class PI0Policy(PreTrainedPolicy):
             batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
 
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
-
-        images, img_masks = self.prepare_images(batch)
-        state = self.prepare_state(batch)
-        lang_tokens, lang_masks = self.prepare_language(batch)
+        # batch = self.normalize_inputs(batch)
+        # batch = self.normalize_targets(batch)
+        # images, img_masks = self.prepare_images(batch)
+        # state = self.prepare_state(batch)
+        # lang_tokens, lang_masks = self.prepare_language(batch)
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+        losses = self.model.forward(batch, actions, noise, time)
         loss_dict["losses_after_forward"] = losses.clone()
 
         if actions_is_pad is not None:
@@ -467,14 +823,144 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         self.config = config
 
-        paligemma_with_export_config = PaliGemmaWithExpertConfig(
-            freeze_vision_encoder=self.config.freeze_vision_encoder,
-            train_expert_only=self.config.train_expert_only,
-            attention_implementation=self.config.attention_implementation,
-        )
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
-
+        # paligemma_with_export_config = PaliGemmaWithExpertConfig(
+        #     freeze_vision_encoder=self.config.freeze_vision_encoder,
+        #     train_expert_only=self.config.train_expert_only,
+        #     attention_implementation=self.config.attention_implementation,
+        # )
+        # self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
+        # self.bagel_model = Bagel() ## TODO:
+        # global bagel_model
+        # self.bagel_model = bagel_model
         # Projections are float32
+
+        if training_args.auto_resume:
+            resume_from = get_latest_ckpt(training_args.checkpoint_dir)
+            if resume_from is None:
+                resume_from = training_args.resume_from
+                resume_model_only = training_args.resume_model_only
+                if resume_model_only:
+                    finetune_from_ema = training_args.finetune_from_ema
+                else:
+                    finetune_from_ema = False
+            else:
+                resume_model_only = False
+                finetune_from_ema = False
+        else:
+            resume_from = training_args.resume_from
+            resume_model_only = training_args.resume_model_only
+            if resume_model_only:
+                finetune_from_ema = training_args.finetune_from_ema
+            else:
+                finetune_from_ema = False
+
+        if training_args.finetune_from_hf:
+            llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
+        else:
+            llm_config = Qwen2Config.from_pretrained(model_args.llm_path)
+        llm_config.layer_module = model_args.layer_module
+        llm_config.qk_norm = model_args.llm_qk_norm
+        llm_config.tie_word_embeddings = model_args.tie_word_embeddings
+        llm_config.freeze_und = training_args.freeze_und
+        if training_args.finetune_from_hf:
+            language_model = Qwen2ForCausalLM(llm_config)
+        else:
+            language_model = Qwen2ForCausalLM.from_pretrained(model_args.llm_path, config=llm_config)
+        if training_args.copy_init_moe:
+            language_model.init_moe()
+
+        if training_args.visual_und:  
+            if training_args.finetune_from_hf:
+                vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
+            else:
+                vit_config = SiglipVisionConfig.from_pretrained(model_args.vit_path)
+            vit_config.num_hidden_layers = vit_config.num_hidden_layers + 1 + model_args.vit_select_layer
+            vit_config.rope = model_args.vit_rope
+            if training_args.finetune_from_hf:
+                vit_model = SiglipVisionModel(vit_config)
+            else:
+                vit_model = SiglipVisionModel.from_pretrained(model_args.vit_path, config=vit_config)
+
+        if training_args.visual_gen:
+            vae_model, vae_config = load_ae(
+                local_path=os.path.join(model_args.model_path, "ae.safetensors") 
+                if training_args.finetune_from_hf else model_args.vae_path
+            )
+            self.vae_model = vae_model
+            self.vae_config = vae_config
+
+        self.bagel_config = BagelConfig(
+            visual_gen=training_args.visual_gen,
+            visual_und=training_args.visual_und,
+            llm_config=llm_config, 
+            vit_config=vit_config if training_args.visual_und else None,
+            vae_config=vae_config if training_args.visual_gen else None,
+            latent_patch_size=model_args.latent_patch_size,
+            max_latent_size=model_args.max_latent_size,
+            vit_max_num_patch_per_side=model_args.vit_max_num_patch_per_side,
+            connector_act=model_args.connector_act,
+            interpolate_pos=model_args.interpolate_pos,
+            timestep_shift=training_args.timestep_shift,
+        )
+
+        bagel_model = Bagel(
+            language_model, 
+            vit_model if training_args.visual_und else None, 
+            self.bagel_config
+        )
+
+        if training_args.visual_und:
+            bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
+
+        tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path if training_args.finetune_from_hf else model_args.llm_path)
+        tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
+        if num_new_tokens > 0:
+            bagel_model.language_model.resize_token_embeddings(len(tokenizer))
+            bagel_model.config.llm_config.vocab_size = len(tokenizer)
+            bagel_model.language_model.config.vocab_size = len(tokenizer)
+
+        # maybe freeze something:
+        if training_args.freeze_vae and training_args.visual_gen:
+            for param in vae_model.parameters():
+                param.requires_grad = False
+        if training_args.freeze_llm:
+            bagel_model.language_model.eval()
+            for param in bagel_model.language_model.parameters():
+                param.requires_grad = False
+        if training_args.freeze_vit and training_args.visual_und:
+            bagel_model.vit_model.eval()
+            for param in bagel_model.vit_model.parameters():
+                param.requires_grad = False
+        
+        self.bagel_model = bagel_model
+        # Setup packed dataloader
+        with open(data_args.dataset_config_file, "r") as stream:
+            dataset_meta = yaml.safe_load(stream)
+        dataset_config = DataConfig(grouped_datasets=dataset_meta)
+        if training_args.visual_und:
+            dataset_config.vit_patch_size = model_args.vit_patch_size
+            dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
+        if training_args.visual_gen:
+            vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
+            dataset_config.vae_image_downsample = vae_image_downsample
+            dataset_config.max_latent_size = model_args.max_latent_size
+            dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
+            dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
+            dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
+        self.dataset = PackedDataset(
+            dataset_config,
+            tokenizer=tokenizer,
+            special_tokens=new_token_ids,
+            expected_num_tokens=training_args.expected_num_tokens,
+            max_num_tokens_per_sample=data_args.max_num_tokens_per_sample,
+            max_num_tokens=data_args.max_num_tokens,
+            max_buffer_size=data_args.max_buffer_size,
+            prefer_buffer_before=data_args.prefer_buffer_before,
+            interpolate_pos=model_args.interpolate_pos,
+            use_flex=training_args.use_flex,
+            data_status=None,
+        )
+
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
         self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
@@ -504,76 +990,51 @@ class PI0FlowMatching(nn.Module):
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks
+        self, batch
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer to prepare
-        for PaliGemma transformer processing.
-        """
-        # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
-        embs = []
-        pad_masks = []
-        att_masks = []
-
-        # TODO: remove for loop
-        for (
-            img,
-            img_mask,
-        ) in zip(images, img_masks, strict=False):
-            img_emb = self.paligemma_with_expert.embed_image(img)
-            img_emb = img_emb.to(dtype=torch.bfloat16)
-
-            # Normalize image embeddings
-            img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
-
-            bsize, num_img_embs = img_emb.shape[:2]
-            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
-
-            embs.append(img_emb)
-            pad_masks.append(img_mask)
-
-            # Create attention masks so that image tokens attend to each other
-            att_masks += [0] * num_img_embs
-
-        lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
-
+        datas = self.dataset(batch)
+        data_batch = SimpleCustomBatch(datas).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
+            if training_args.visual_gen:
+                with torch.no_grad():
+                    data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
         # Normalize language embeddings
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        # lang_emb_dim = lang_emb.shape[-1]
+        # lang_emb = lang_emb * math.sqrt(lang_emb_dim)
 
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
+        # embs.append(lang_emb)
+        # pad_masks.append(lang_masks)
 
-        # full attention between image and language inputs
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
+        # # full attention between image and language inputs
+        # num_lang_embs = lang_emb.shape[1]
+        # att_masks += [0] * num_lang_embs
 
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        # embs = torch.cat(embs, dim=1)
+        # pad_masks = torch.cat(pad_masks, dim=1)
+        # att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        # att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks
+        return data_batch
 
-    def embed_suffix(self, state, noisy_actions, timestep):
+    def embed_suffix(self, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
         embs = []
         pad_masks = []
         att_masks = []
 
         # Embed state
-        state_emb = self.state_proj(state)
-        state_emb = state_emb.to(dtype=torch.bfloat16)
-        embs.append(state_emb[:, None, :])
-        bsize = state_emb.shape[0]
-        dtype = state_emb.dtype
-        device = state_emb.device
+        # state_emb = self.state_proj(state)
+        # state_emb = state_emb.to(dtype=torch.bfloat16)
+        # embs.append(state_emb[:, None, :])
+        # bsize = state_emb.shape[0]
+        # dtype = state_emb.dtype
+        # device = state_emb.device
 
-        state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
-        pad_masks.append(state_mask)
+        # state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
+        # pad_masks.append(state_mask)
 
-        # Set attention masks so that image and language inputs do not attend to state or actions
-        att_masks += [1]
+        # # Set attention masks so that image and language inputs do not attend to state or actions
+        # att_masks += [1]
 
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
@@ -609,7 +1070,7 @@ class PI0FlowMatching(nn.Module):
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
+        self, batch, actions, noise=None, time=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         if noise is None:
@@ -621,32 +1082,24 @@ class PI0FlowMatching(nn.Module):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
+        data_batch = self.embed_prefix(
+            batch
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
+        import ipdb;ipdb.set_trace()
+        loss_dict = self.bagel_model(**data_batch)
+        import ipdb;ipdb.set_trace()
+        mse = torch.tensor(0.).float().to(device)
+        if self.config.visual_gen:
+            packed_mse_preds = self.bagel_model.llm2vae(last_hidden_state[mse_loss_indexes])
+            target = noise - packed_latent_clean # NOTE: v_t=dx_t/dt=x_1-x_0, pointing from data to noise
+            has_mse = packed_timesteps > 0
+            mse = (packed_mse_preds - target[has_mse]) ** 2
 
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
-
-        (_, suffix_out), _ = self.paligemma_with_expert.forward(
-            attention_mask=att_2d_masks,
-            position_ids=position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, suffix_embs],
-            use_cache=False,
-            fill_kv_cache=False,
-        )
-        suffix_out = suffix_out[:, -self.config.n_action_steps :]
-        # Original openpi code, upcast attention output
-        suffix_out = suffix_out.to(dtype=torch.float32)
-        v_t = self.action_out_proj(suffix_out)
-
-        losses = F.mse_loss(u_t, v_t, reduction="none")
+        ce = torch.tensor(0.).float().to(device)
+        if ce_loss_indexes is not None:
+            packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
+            ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
+        losses = (mse + ce).mean()
         return losses
 
     def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
@@ -658,21 +1111,20 @@ class PI0FlowMatching(nn.Module):
             actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+        generation_input, newlens, new_rope, past_key_values = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks
         )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        # Compute image and language key value cache
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=self.config.use_cache,
-            fill_kv_cache=True,
-        )
+        # prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        # prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        ## Compute image and language key value cache
+        # _, past_key_values = self.paligemma_with_expert.forward(
+        #     attention_mask=prefix_att_2d_masks,
+        #     position_ids=prefix_position_ids,
+        #     past_key_values=None,
+        #     inputs_embeds=[prefix_embs, None],
+        #     use_cache=self.config.use_cache,
+        #     fill_kv_cache=True,
+        # )
 
         dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
