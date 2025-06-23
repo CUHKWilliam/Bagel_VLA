@@ -95,6 +95,7 @@ import yaml
 import numpy as np
 import torch
 import cv2
+from .tokenizer import ActionTokenizer
 
 @dataclass
 class DataArguments:
@@ -902,13 +903,12 @@ class PI0FlowMatching(nn.Module):
             interpolate_pos=model_args.interpolate_pos,
             timestep_shift=training_args.timestep_shift,
         )
-
         bagel_model = Bagel(
             language_model, 
             vit_model if training_args.visual_und else None, 
             self.bagel_config
         )
-
+        
         if training_args.visual_und:
             bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
 
@@ -968,7 +968,11 @@ class PI0FlowMatching(nn.Module):
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
         self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
 
+        self.action_tokenizer = ActionTokenizer(
+            tokenizer=tokenizer,
+        )
         self.set_requires_grad()
+
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -998,6 +1002,9 @@ class PI0FlowMatching(nn.Module):
             if training_args.visual_gen:
                 with torch.no_grad():
                     data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+            if "packed_action_tokens" in data_batch.keys():
+                with torch.no_grad():
+                    data_batch['packed_action_tokens'] = torch.tensor(self.action_tokenizer(data_batch['packed_action_tokens'].detach().cpu().numpy())).to(f"cuda:{torch.cuda.current_device()}")
         # Normalize language embeddings
         # lang_emb_dim = lang_emb.shape[-1]
         # lang_emb = lang_emb * math.sqrt(lang_emb_dim)
@@ -1079,13 +1086,9 @@ class PI0FlowMatching(nn.Module):
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
         data_batch = self.embed_prefix(
             batch
         )
-        import ipdb;ipdb.set_trace()
         loss_dict = self.bagel_model(**data_batch)
         import ipdb;ipdb.set_trace()
         mse = torch.tensor(0.).float().to(device)

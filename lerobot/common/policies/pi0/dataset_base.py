@@ -206,6 +206,7 @@ class InterleavedBaseIterableDataset:
             'sequence_plan': [],
             'text_ids_list': [],
             'image_tensor_list': [],
+            "action": [],
             'num_tokens': 0,
         }
         return data
@@ -227,6 +228,7 @@ class InterleavedBaseIterableDataset:
     
     def _add_action(self, data, action, need_loss, enable_cfg=True):
         assert need_loss
+        data['action'].append(action)
         data['sequence_plan'].append(
             {
                 "type": "action",
@@ -366,14 +368,13 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                 need_vit=True,
             )
             actions = sample['action']
-            data = self._add_text(
-                data, 
-                self.action_to_text(actions[idx]),
-                need_loss=True, 
-            )
+            actions = actions[:, :5, :] ##TODO: set action steps
+            if actions.size(1) == 6:
+                actions = torch.cat([actions, torch.zeros((actions.size(0), actions.size(1), 1))], dim=-1)
+            sample['action'] = actions
             data = self._add_action(
                 data,
-                sample['action']
+                sample['action'],
                 need_loss=True,
             )
             datas.append(data)
@@ -497,6 +498,8 @@ class PackedDataset:
             packed_action_token_indexes = list(),
             packed_action_position_ids  = list(),
             packed_action_tokens        = list(),
+            action_loss_indexes         = list(),
+            action_loss_weights         = list(),
         )
         return sequence_status
 
@@ -549,6 +552,11 @@ class PackedDataset:
             data['ce_loss_indexes'] = torch.tensor(sequence_status['ce_loss_indexes'])
             data['ce_loss_weights'] = torch.tensor(sequence_status['ce_loss_weights'])
 
+        if len(sequence_status['packed_action_tokens']) > 0:
+            data['packed_action_tokens'] = torch.cat(sequence_status['packed_action_tokens'], dim=0)
+            data['packed_action_position_ids'] = torch.tensor(sequence_status['packed_action_position_ids'])
+            data['packed_action_token_indexes'] = torch.tensor(sequence_status['packed_action_token_indexes'])
+
         return data
 
     def __call__(self, sample):
@@ -578,8 +586,8 @@ class PackedDataset:
 
             if item['type'] == 'text':
                 text_ids = text_ids_list.pop(0)
-                if item['enable_cfg'] == 1 and random.random() < self.data_config.text_cond_dropout_prob:
-                    continue
+                # if item['enable_cfg'] == 1 and random.random() < self.data_config.text_cond_dropout_prob:
+                #     continue
 
                 shifted_text_ids = [self.bos_token_id] + text_ids
                 sequence_status['packed_text_ids'].extend(shifted_text_ids)
@@ -607,8 +615,10 @@ class PackedDataset:
                 attn_modes.append("causal")
                 sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
                 curr_rope_id += curr_split_len
+                import ipdb;ipdb.set_trace()
             elif item['type'] == "action":
-                action_tensor = sample['action']
+                action_tensor = sample['action'][0][0]
+                action_tensor = action_tensor.view(-1)
                 # add a <|startofaction|> token
                 sequence_status['packed_text_ids'].append(self.boa_token_id)
                 sequence_status['packed_text_indexes'].append(curr)
@@ -616,13 +626,13 @@ class PackedDataset:
                 curr_split_len += 1
 
                 num_action_tokens = len(action_tensor)
-                sequence_status['packed_action_tokens'].append(action_tensor)
+                sequence_status['packed_action_tokens'].append(action_tensor) ## TODO: formatting
                 sequence_status['packed_action_token_indexes'].extend(range(curr, curr + num_action_tokens))
-                sequence_status['ce_loss_indexes'].extend(range(curr, curr + num_action_tokens))
-                sequence_status['ce_loss_weights'].extend(
+                sequence_status['action_loss_indexes'].extend(range(curr, curr + num_action_tokens))
+                sequence_status['action_loss_weights'].extend(
                     [len2weight(num_action_tokens)] * num_action_tokens
                 )
-                sequence_status['packed_label_ids'].extend(text_ids + [self.eoa_token_id])
+                sequence_status['packed_label_ids'].extend(text_ids)
                 curr += num_action_tokens
                 curr_split_len += num_action_tokens
 
@@ -630,17 +640,17 @@ class PackedDataset:
                 sequence_status['packed_text_ids'].append(self.eoa_token_id)
                 sequence_status['packed_text_indexes'].append(curr)
                 if item['special_token_loss'] == 1: # <|im_end|> may have loss
-                    sequence_status['ce_loss_indexes'].append(curr)
-                    sequence_status['ce_loss_weights'].append(1.0)
+                    sequence_status['action_loss_indexes'].append(curr)
+                    sequence_status['action_loss_weights'].append(1.0)
                     sequence_status['packed_label_ids'].append(item['special_token_label'])
                 curr += 1
                 curr_split_len += 1
 
                 # update sequence status
-                attn_modes.append("causal")
-                sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
+                attn_modes.append("full")
+                sequence_status['packed_action_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
+                sequence_status['packed_position_ids'].extend([curr_rope_id] * curr_split_len)
                 curr_rope_id += curr_split_len
-                
                 
             elif item['type'] == 'vit_image':
                 image_tensor = image_tensor_list.pop(0)
@@ -752,7 +762,6 @@ class PackedDataset:
             if item.get('split_end', True):
                 split_lens.append(curr_split_len)
                 sample_lens += curr_split_len
-
         sequence_status['curr'] = curr
         sequence_status['sample_lens'].append(sample_lens)
         # prepare attention mask
@@ -763,7 +772,6 @@ class PackedDataset:
         else:
             sequence_status['split_lens'].extend(split_lens)
             sequence_status['attn_modes'].extend(attn_modes)
-
         return sequence_status
 
 
@@ -805,6 +813,11 @@ class SimpleCustomBatch:
             self.ce_loss_indexes = data["ce_loss_indexes"]
             self.ce_loss_weights = data["ce_loss_weights"]
 
+        if "packed_action_tokens" in data.keys():
+            self.packed_action_tokens = data["packed_action_tokens"]
+            self.packed_action_position_ids = data["packed_action_position_ids"]
+            self.packed_action_token_indexes = data["packed_action_token_indexes"]
+
     def pin_memory(self):
         self.packed_text_ids = self.packed_text_ids.pin_memory()
         self.packed_text_indexes = self.packed_text_indexes.pin_memory()
@@ -832,6 +845,12 @@ class SimpleCustomBatch:
             self.packed_label_ids = self.packed_label_ids.pin_memory()
             self.ce_loss_indexes = self.ce_loss_indexes.pin_memory()
             self.ce_loss_weights = self.ce_loss_weights.pin_memory()
+
+        if hasattr(self, "packed_action_tokens"):
+            self.packed_action_tokens = self.packed_action_tokens.pin_memory()
+            self.packed_action_position_ids = self.packed_action_position_ids.pin_memory()
+            self.packed_action_token_indexes = self.packed_action_token_indexes.pin_memory()
+        
 
         return self
 
@@ -891,7 +910,11 @@ class SimpleCustomBatch:
             data['packed_vit_position_ids'] = self.packed_vit_position_ids
             data['packed_vit_token_indexes'] = self.packed_vit_token_indexes
             data['vit_token_seqlens'] = self.vit_token_seqlens
-
+        
+        if hasattr(self, 'packed_action_tokens'):
+            data['packed_action_tokens'] = self.packed_action_tokens
+            data['packed_action_position_ids'] = self.packed_action_position_ids
+            data['packed_action_token_indexes'] = self.packed_action_token_indexes
         if hasattr(self, 'packed_timesteps'):
             data['packed_timesteps'] = self.packed_timesteps
             data['mse_loss_indexes'] = self.mse_loss_indexes

@@ -10,7 +10,7 @@ from torch import nn
 from torch.nn.attention.flex_attention import create_block_mask
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
-
+from transformers import AutoConfig
 from lerobot.common.utils.data_utils import (
     create_sparse_mask, 
     get_flattened_position_ids_extrapolate, 
@@ -18,8 +18,7 @@ from lerobot.common.utils.data_utils import (
     patchify, 
 )
 from .qwen2_navit import NaiveCache
-from .modeling_utils import MLPconnector, TimestepEmbedder, PositionEmbedding, create_sinusoidal_pos_embedding
-
+from .modeling_utils import MLPconnector, TimestepEmbedder, PositionEmbedding
 from tqdm import tqdm
 
 
@@ -54,7 +53,8 @@ class BagelConfig(PretrainedConfig):
         self.interpolate_pos = interpolate_pos
         self.timestep_shift = timestep_shift
         ## TODO: from openpi zero, for action generation
-        self.n_action_steps = 50
+        self.n_action_steps = 5
+        self.action_dim = 7
         self.max_action_dim = 32
         self.action_proj_width = 1024
         self.action_num_steps = 10
@@ -173,15 +173,6 @@ class Bagel(PreTrainedModel):
         self.use_moe = "Mo" in config.llm_config.layer_module
         self.num_heads = config.llm_config.num_attention_heads
 
-        if config.action_gen:
-            self.action_pos_embed = PositionEmbedding(self.config.n_action_steps, self.action_hidden_size)
-            self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.action_proj_width)
-            self.action_out_proj = nn.Linear(self.config.action_proj_width, self.config.max_action_dim)
-            self.action_time_mlp_in = nn.Linear(self.config.action_proj_width * 2, self.config.action_proj_width)
-            self.action_time_mlp_out = nn.Linear(self.config.action_proj_width, self.config.action_proj_width)
-            self.gemma_expert = GemmaForCausalLM(config=PaliGemmaWithExpertConfig())
-            self.gemma_expert.model.embed_tokens = None
-
         if config.visual_gen:
             self.time_embedder = TimestepEmbedder(self.hidden_size)
             self.timestep_shift = config.timestep_shift
@@ -240,9 +231,10 @@ class Bagel(PreTrainedModel):
         packed_timesteps: Optional[torch.LongTensor] = None,
         mse_loss_indexes: Optional[torch.BoolTensor] = None,
         # for action generation
-        padded_action_tokens: Optional[torch.Tensor] = None,
+        packed_action_tokens: Optional[torch.Tensor] = None,
         packed_action_position_ids: Optional[torch.LongTensor] = None,
         packed_action_token_indexes: Optional[torch.LongTensor] = None,
+        action_loss_indexes: Optional[torch.BoolTensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -320,19 +312,8 @@ class Bagel(PreTrainedModel):
 
         if self.config.action_gen:
             n_action_steps = self.config.n_action_steps
-            noise = torch.randn_like(packed_action_tokens)
-            packed_timesteps = torch.sigmoid(packed_timesteps)
-            packed_timesteps = self.timestep_shift * packed_timesteps / (1 + (self.timestep_shift - 1) * packed_timesteps)
-            packed_action_tokens = (1 - packed_timesteps[:, None]) * packed_action_tokens + packed_timesteps[:, None] * noise
-
-            time_embed = create_sinusoidal_pos_embedding(packed_timesteps, self.config.action_proj_width, min_period=4e-3, max_period=4.0, device=device)
-            action_emb = self.action_in_proj(packed_action_tokens)
-            time_emb = time_emb[:, None, :].expand_as(action_emb)
-            action_time_emb = torch.cat([action_emb, time_emb], dim=2)
-            action_time_emb = self.action_time_mlp_in(action_time_emb)
-            action_time_emb = F.silu(action_time_emb)  # swish == silu
-            action_time_emb = self.action_time_mlp_out(action_time_emb)
-            packed_sequence[packed_action_token_indexes] = action_time_emb
+            packed_action_embedding = self.language_model.model.embed_tokens(packed_action_tokens)
+            packed_sequence[packed_action_token_indexes] = packed_action_embedding
 
         extra_inputs = {}
         if self.use_moe:
@@ -344,7 +325,6 @@ class Bagel(PreTrainedModel):
                 packed_gen_token_indexes=packed_vae_token_indexes,
                 packed_action_token_indexes=packed_action_token_indexes,
             )
-        
         last_hidden_state = self.language_model(
             packed_sequence=packed_sequence,
             sample_lens=sample_lens,
@@ -361,10 +341,8 @@ class Bagel(PreTrainedModel):
             mse = (packed_mse_preds - target[has_mse]) ** 2
         action_mse = None
         if self.config.action_gen:
-            suffix_out = suffix_out[:, -self.config.n_action_steps :]
             # Original openpi code, upcast attention output
-            suffix_out = suffix_out.to(dtype=torch.float32)
-            v_t = self.action_out_proj(suffix_out)
+            v_t = self.action_out_proj(last_hidden_state[action_loss_indexes])
             action_mse = F.mse_loss(u_t, v_t, reduction="none")
         ce = None
         if ce_loss_indexes is not None:

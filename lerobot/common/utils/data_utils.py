@@ -148,6 +148,12 @@ def add_special_tokens(tokenizer):
 
     if '<|vision_end|>' not in all_special_tokens:
         new_tokens.append('<|vision_end|>')
+    
+    if '<|action_start|>' not in all_special_tokens:
+        new_tokens.append('<|action_start|>')
+    
+    if '<|action_end|>' not in all_special_tokens:
+        new_tokens.append('<|action_end|>')
 
     num_new_tokens = tokenizer.add_tokens(new_tokens)
     bos_token_id = tokenizer.convert_tokens_to_ids('<|im_start|>')

@@ -69,7 +69,7 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
 def create_sinusoidal_pos_embedding(
     time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
-) -> Tensor:
+) -> torch.Tensor:
     ## TODO: from pi zero
     """Computes sine-cosine positional embedding vectors for scalar positions."""
     if dimension % 2 != 0:
