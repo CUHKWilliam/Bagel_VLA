@@ -97,6 +97,14 @@ import torch
 import cv2
 from .tokenizer import ActionTokenizer
 
+def autocast(data_batch, dtype1, dtype2):
+    for key in data_batch.keys():
+        value = data_batch[key]
+        if isinstance(value, torch.Tensor) and value.dtype == dtype1:
+            value = value.type(dtype2)
+            data_batch[key] = value
+    return data_batch
+
 @dataclass
 class DataArguments:
     dataset_config_file: str = field(
@@ -396,10 +404,6 @@ class TrainingArguments:
         metadata={"help": "Enable FLEX (flash-ext friendly) packing algorithm for sequence data."}
     )
 assert torch.cuda.is_available()
-dist.init_process_group("nccl")
-device = dist.get_rank() % torch.cuda.device_count()
-torch.cuda.set_device(device)
-
 parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
 model_args, data_args, training_args, _ = parser.parse_args_into_dataclasses(return_remaining_strings=True)
 
@@ -673,23 +677,7 @@ class PI0Policy(PreTrainedPolicy):
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
-        losses = self.model.forward(batch, actions, noise, time)
-        loss_dict["losses_after_forward"] = losses.clone()
-
-        if actions_is_pad is not None:
-            in_episode_bound = ~actions_is_pad
-            losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
-
-        # Remove padding
-        losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone()
-
-        # For backward pass
-        loss = losses.mean()
-        # For logging
-        loss_dict["l2_loss"] = loss.item()
-
+        loss, loss_dict = self.model.forward(batch, actions, noise, time)
         return loss, loss_dict
 
     def prepare_images(self, batch):
@@ -960,17 +948,14 @@ class PI0FlowMatching(nn.Module):
             use_flex=training_args.use_flex,
             data_status=None,
         )
-
-        self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
-
-        self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
-        self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
-
         self.action_tokenizer = ActionTokenizer(
             tokenizer=tokenizer,
         )
+        self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
+        self.act_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
+        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, self.action_tokenizer.n_bins)
+
+   
         self.set_requires_grad()
 
 
@@ -998,29 +983,13 @@ class PI0FlowMatching(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         datas = self.dataset(batch)
         data_batch = SimpleCustomBatch(datas).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
-        with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
-            if training_args.visual_gen:
-                with torch.no_grad():
-                    data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
-            if "packed_action_tokens" in data_batch.keys():
-                with torch.no_grad():
-                    data_batch['packed_action_tokens'] = torch.tensor(self.action_tokenizer(data_batch['packed_action_tokens'].detach().cpu().numpy())).to(f"cuda:{torch.cuda.current_device()}")
-        # Normalize language embeddings
-        # lang_emb_dim = lang_emb.shape[-1]
-        # lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-
-        # embs.append(lang_emb)
-        # pad_masks.append(lang_masks)
-
-        # # full attention between image and language inputs
-        # num_lang_embs = lang_emb.shape[1]
-        # att_masks += [0] * num_lang_embs
-
-        # embs = torch.cat(embs, dim=1)
-        # pad_masks = torch.cat(pad_masks, dim=1)
-        # att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-        # att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
+        data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
+        if training_args.visual_gen:
+            with torch.no_grad():
+                data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+        if "packed_action_tokens" in data_batch.keys():
+            with torch.no_grad():
+                data_batch['packed_action_tokens'] = torch.tensor(self.action_tokenizer(data_batch['packed_action_tokens'].detach().cpu().numpy())).to(f"cuda:{torch.cuda.current_device()}")
         return data_batch
 
     def embed_suffix(self, noisy_actions, timestep):
@@ -1050,7 +1019,7 @@ class PI0FlowMatching(nn.Module):
         time_emb = time_emb.type(dtype=dtype)
 
         # Fuse timestep + action information using an MLP
-        action_emb = self.action_in_proj(noisy_actions)
+        action_emb = self.act_in_proj(noisy_actions)
 
         time_emb = time_emb[:, None, :].expand_as(action_emb)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
@@ -1080,30 +1049,60 @@ class PI0FlowMatching(nn.Module):
         self, batch, actions, noise=None, time=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        if noise is None:
-            noise = self.sample_noise(actions.shape, actions.device)
-
-        if time is None:
-            time = self.sample_time(actions.shape[0], actions.device)
-
         data_batch = self.embed_prefix(
             batch
         )
-        loss_dict = self.bagel_model(**data_batch)
-        import ipdb;ipdb.set_trace()
-        mse = torch.tensor(0.).float().to(device)
-        if self.config.visual_gen:
-            packed_mse_preds = self.bagel_model.llm2vae(last_hidden_state[mse_loss_indexes])
-            target = noise - packed_latent_clean # NOTE: v_t=dx_t/dt=x_1-x_0, pointing from data to noise
-            has_mse = packed_timesteps > 0
-            mse = (packed_mse_preds - target[has_mse]) ** 2
+        ret = self.bagel_model(**data_batch,)
+        mse = ret['mse']
+        ce = ret['ce']
+        last_hidden_state = ret['last_hidden_state']
+        action_mse = None
+        if self.bagel_model.config.action_gen:
+            # Original openpi code, upcast attention output
+            action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])
+            action_mse = F.cross_entropy(action_pred, data_batch["packed_action_tokens"] - self.action_tokenizer.action_token_begin_idx - 1, reduction="none")
+        loss_dict = {}
+        loss = 0
+        if ce is not None:
+            total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
+            dist.all_reduce(total_ce_tokens, op=dist.ReduceOp.SUM)
+            if training_args.ce_loss_reweighting:
+                ce = ce * ce_loss_weights
+                total_ce_loss_weights = ce_loss_weights.sum()
+                dist.all_reduce(total_ce_loss_weights, op=dist.ReduceOp.SUM)
+                ce = ce.sum() * dist.get_world_size() / total_ce_loss_weights
+            else:
+                ce = ce.sum() * dist.get_world_size() / total_ce_tokens
+            loss_dict["ce"] = ce.detach()
+            loss = loss + ce * self.bagel_model.config.ce_weight
+        else:
+            loss_dict["ce"] = torch.tensor(0).cuda()
+            total_ce_tokens = torch.tensor(0).cuda()
 
-        ce = torch.tensor(0.).float().to(device)
-        if ce_loss_indexes is not None:
-            packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
-            ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
-        losses = (mse + ce).mean()
-        return losses
+        if self.bagel_model.config.visual_gen:
+            total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
+            dist.all_reduce(total_mse_tokens, op=dist.ReduceOp.SUM)
+            mse = mse.mean(dim=-1).sum() * dist.get_world_size() / total_mse_tokens
+            loss_dict["mse"] = mse.detach()
+            loss = loss + mse * self.bagel_model.config.mse_weight
+        else:
+            loss_dict["mse"] = torch.tensor(0).cuda()
+            total_mse_tokens = torch.tensor(0).cuda()
+
+        if self.bagel_model.config.action_gen:
+            total_action_tokens = torch.tensor(len(data_batch['action_loss_indexes'])).cuda()
+            dist.all_reduce(total_action_tokens, op=dist.ReduceOp.SUM)
+            action_mse = action_mse.mean(dim=-1).sum() * dist.get_world_size() / total_action_tokens
+            loss_dict["action_mse"] = action_mse.detach()
+            loss = loss + action_mse * self.bagel_model.config.action_mse_weight
+        else:
+            loss_dict["action_mse"] = torch.tensor(0).cuda()
+            total_action_mse_tokens = torch.tensor(0).cuda()
+        loss_dict['loss'] = loss.detach()
+        return loss, loss_dict
+
+    def generate_image(self, images, instruction, ):
+        self.bagel_model.chat(self.tokenizer, )
 
     def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""

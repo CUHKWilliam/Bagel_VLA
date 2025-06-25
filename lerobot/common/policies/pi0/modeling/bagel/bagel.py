@@ -58,6 +58,10 @@ class BagelConfig(PretrainedConfig):
         self.max_action_dim = 32
         self.action_proj_width = 1024
         self.action_num_steps = 10
+        self.mse_weight: float = 1.0
+        self.ce_weight: float = 1.0
+        self.ce_loss_reweighting: bool = False
+        self.action_mse_weight: float = 1.0
 
 
 class PaliGemmaWithExpertConfig(PretrainedConfig):
@@ -184,7 +188,8 @@ class Bagel(PreTrainedModel):
             self.vae2llm = nn.Linear(self.patch_latent_dim, self.hidden_size)
             self.llm2vae = nn.Linear(self.hidden_size, self.patch_latent_dim)
             self.latent_pos_embed = PositionEmbedding(self.max_latent_size, self.hidden_size)
-            
+
+
         if config.visual_und:
             self.vit_model = vit_model
             self.vit_patch_size = config.vit_config.patch_size
@@ -339,17 +344,11 @@ class Bagel(PreTrainedModel):
             target = noise - packed_latent_clean # NOTE: v_t=dx_t/dt=x_1-x_0, pointing from data to noise
             has_mse = packed_timesteps > 0
             mse = (packed_mse_preds - target[has_mse]) ** 2
-        action_mse = None
-        if self.config.action_gen:
-            # Original openpi code, upcast attention output
-            v_t = self.action_out_proj(last_hidden_state[action_loss_indexes])
-            action_mse = F.mse_loss(u_t, v_t, reduction="none")
         ce = None
         if ce_loss_indexes is not None:
             packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
             ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
-
-        return dict(mse=mse, ce=ce, action_mse=action_mse)
+        return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state)
 
     def prepare_prompts(self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids):
         packed_text_ids = list()
@@ -1118,8 +1117,7 @@ class Bagel(PreTrainedModel):
             for k, v in generation_input.items():
                 if torch.is_tensor(v):
                     generation_input[k] = v.to(device)
-            with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
-                past_key_values = self.forward_cache_update_vit(past_key_values, **generation_input)
+            past_key_values = self.forward_cache_update_vit(past_key_values, **generation_input)
 
         # add text
         generation_input, newlens, new_rope = self.prepare_prompts(
@@ -1132,23 +1130,21 @@ class Bagel(PreTrainedModel):
         for k, v in generation_input.items():
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
-        with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
-            past_key_values = self.forward_cache_update_text(past_key_values, **generation_input)
+        past_key_values = self.forward_cache_update_text(past_key_values, **generation_input)
 
         # decode
         generation_input = self.prepare_start_tokens(newlens, new_rope, new_token_ids)
         for k, v in generation_input.items():
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
-        with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
-            unpacked_latent = self.generate_text(
-                past_key_values=past_key_values,
-                max_length=max_length,
-                do_sample=do_sample,
-                temperature=temperature,
-                end_token_id=new_token_ids['eos_token_id'],
-                **generation_input,
-            )
+        unpacked_latent = self.generate_text(
+            past_key_values=past_key_values,
+            max_length=max_length,
+            do_sample=do_sample,
+            temperature=temperature,
+            end_token_id=new_token_ids['eos_token_id'],
+            **generation_input,
+        )
         output = tokenizer.decode(unpacked_latent[:,0])
         output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
 

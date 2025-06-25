@@ -556,7 +556,7 @@ class PackedDataset:
             data['packed_action_tokens'] = torch.cat(sequence_status['packed_action_tokens'], dim=0)
             data['packed_action_position_ids'] = torch.tensor(sequence_status['packed_action_position_ids'])
             data['packed_action_token_indexes'] = torch.tensor(sequence_status['packed_action_token_indexes'])
-
+            data['action_loss_indexes'] = torch.tensor(sequence_status['action_loss_indexes'])
         return data
 
     def __call__(self, sample):
@@ -615,7 +615,6 @@ class PackedDataset:
                 attn_modes.append("causal")
                 sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
                 curr_rope_id += curr_split_len
-                import ipdb;ipdb.set_trace()
             elif item['type'] == "action":
                 action_tensor = sample['action'][0][0]
                 action_tensor = action_tensor.view(-1)
@@ -632,7 +631,6 @@ class PackedDataset:
                 sequence_status['action_loss_weights'].extend(
                     [len2weight(num_action_tokens)] * num_action_tokens
                 )
-                sequence_status['packed_label_ids'].extend(text_ids)
                 curr += num_action_tokens
                 curr_split_len += num_action_tokens
 
@@ -817,6 +815,7 @@ class SimpleCustomBatch:
             self.packed_action_tokens = data["packed_action_tokens"]
             self.packed_action_position_ids = data["packed_action_position_ids"]
             self.packed_action_token_indexes = data["packed_action_token_indexes"]
+            self.action_loss_indexes = data["action_loss_indexes"]
 
     def pin_memory(self):
         self.packed_text_ids = self.packed_text_ids.pin_memory()
@@ -850,7 +849,7 @@ class SimpleCustomBatch:
             self.packed_action_tokens = self.packed_action_tokens.pin_memory()
             self.packed_action_position_ids = self.packed_action_position_ids.pin_memory()
             self.packed_action_token_indexes = self.packed_action_token_indexes.pin_memory()
-        
+            self.action_loss_indexes = self.action_loss_indexes.pin_memory()
 
         return self
 
@@ -881,6 +880,12 @@ class SimpleCustomBatch:
             self.packed_label_ids = self.packed_label_ids.to(device)
             self.ce_loss_indexes = self.ce_loss_indexes.to(device)
             self.ce_loss_weights = self.ce_loss_weights.to(device)
+        
+        if hasattr(self, 'packed_action_tokens'):
+            self.packed_action_tokens = self.packed_action_tokens.to(device)
+            self.packed_action_position_ids = self.packed_action_position_ids.to(device)
+            self.packed_action_token_indexes = self.packed_action_token_indexes.to(device)
+            self.action_loss_indexes = self.action_loss_indexes.to(device)
 
         return self
 
@@ -915,6 +920,8 @@ class SimpleCustomBatch:
             data['packed_action_tokens'] = self.packed_action_tokens
             data['packed_action_position_ids'] = self.packed_action_position_ids
             data['packed_action_token_indexes'] = self.packed_action_token_indexes
+            data['action_loss_indexes'] = self.action_loss_indexes
+
         if hasattr(self, 'packed_timesteps'):
             data['packed_timesteps'] = self.packed_timesteps
             data['mse_loss_indexes'] = self.mse_loss_indexes
@@ -923,7 +930,6 @@ class SimpleCustomBatch:
             data['packed_label_ids'] = self.packed_label_ids
             data['ce_loss_indexes'] = self.ce_loss_indexes
             data['ce_loss_weights'] = self.ce_loss_weights
-
         return data
 
 

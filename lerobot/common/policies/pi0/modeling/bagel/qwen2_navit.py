@@ -1534,7 +1534,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
         self.model = Qwen2Model(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
+    
         # Initialize weights and apply final processing
         self.post_init()
 
