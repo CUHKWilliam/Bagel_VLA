@@ -5,6 +5,8 @@ import copy
 from typing import List, Tuple, Optional
 
 import torch
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 import torch.nn.functional as F
 from torch import nn
 from torch.nn.attention.flex_attention import create_block_mask
@@ -55,6 +57,7 @@ class BagelConfig(PretrainedConfig):
         ## TODO: from openpi zero, for action generation
         self.n_action_steps = 5
         self.action_dim = 7
+        self.action_horizon = 5
         self.max_action_dim = 32
         self.action_proj_width = 1024
         self.action_num_steps = 10
@@ -173,6 +176,11 @@ class Bagel(PreTrainedModel):
     def __init__(self, language_model, vit_model, config: BagelConfig):
         super().__init__(config)    
         self.language_model = language_model
+
+        for n, p in self.language_model.model.layers.named_parameters():
+            if "27" not in n: ## TODO:
+                p.requires_grad = False
+
         self.hidden_size = config.llm_config.hidden_size
         self.use_moe = "Mo" in config.llm_config.layer_module
         self.num_heads = config.llm_config.num_attention_heads
@@ -202,7 +210,9 @@ class Bagel(PreTrainedModel):
             self.get_flattened_position_ids = get_flattened_position_ids_interpolate
         else:
             self.get_flattened_position_ids = get_flattened_position_ids_extrapolate
-
+        
+        self.action_dim = config.action_dim
+        self.action_horizon = config.action_horizon
         self.config = config
         self._init_weights()
 
@@ -281,7 +291,6 @@ class Bagel(PreTrainedModel):
             attention_mask = block_mask
         else:
             attention_mask = nested_attention_masks
-
         if self.config.visual_und:
             cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
             cu_seqlens = cu_seqlens.to(torch.int32)
@@ -330,13 +339,14 @@ class Bagel(PreTrainedModel):
                 packed_gen_token_indexes=packed_vae_token_indexes,
                 packed_action_token_indexes=packed_action_token_indexes,
             )
-        last_hidden_state = self.language_model(
-            packed_sequence=packed_sequence,
-            sample_lens=sample_lens,
-            attention_mask=attention_mask,
-            packed_position_ids=packed_position_ids,
-            **extra_inputs,
-        )
+        with torch.no_grad():
+            last_hidden_state = self.language_model(
+                packed_sequence=packed_sequence,
+                sample_lens=sample_lens,
+                attention_mask=attention_mask,
+                packed_position_ids=packed_position_ids,
+                **extra_inputs,
+            )
 
         mse = None
         if self.config.visual_gen:
@@ -498,7 +508,6 @@ class Bagel(PreTrainedModel):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
-
         cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
         cu_seqlens = cu_seqlens.to(torch.int32)
         max_seqlen = torch.max(vit_token_seqlens).item()
@@ -675,6 +684,8 @@ class Bagel(PreTrainedModel):
         packed_vae_position_ids, packed_vae_token_indexes, packed_init_noises = list(), list(), list()
         packed_position_ids, packed_seqlens, packed_indexes = list(), list(), list()
         packed_key_value_indexes = list()
+        newlens = list()
+        new_rope = list()
 
         query_curr = curr = 0
         for (H, W), curr_kvlen, curr_position_id in zip(image_sizes, curr_kvlens, curr_rope):
@@ -707,12 +718,15 @@ class Bagel(PreTrainedModel):
             packed_text_ids.append(new_token_ids['end_of_image'])
             packed_text_indexes.append(query_curr)
             packed_indexes.append(curr)
+            newlens.append(curr_kvlen + num_image_tokens)
+            new_rope.append(curr_position_id + 1)
+
             curr += 1
             query_curr += 1
 
             packed_position_ids.extend([curr_position_id] * (num_image_tokens + 2))
             packed_seqlens.append(num_image_tokens + 2)
-
+    
         generation_input = {
             "packed_text_ids": torch.tensor(packed_text_ids, dtype=torch.long),
             "packed_text_indexes": torch.tensor(packed_text_indexes, dtype=torch.long),
@@ -726,7 +740,7 @@ class Bagel(PreTrainedModel):
             "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
         }
 
-        return generation_input
+        return generation_input, newlens, new_rope
 
     def prepare_vae_latent_cfg(self, curr_kvlens, curr_rope, image_sizes):
         packed_position_ids, packed_indexes, packed_key_value_indexes = list(), list(), list()
@@ -812,7 +826,11 @@ class Bagel(PreTrainedModel):
             else:
                 cfg_text_scale_ = 1.0
                 cfg_img_scale_ = 1.0
-            v_t = self._forward_flow(
+            if t == len(timesteps) - 1: ## indicating the last 
+                update_past_key_values = True
+            else:
+                update_past_key_values = False
+            v_t, past_key_values = self._forward_flow(
                 x_t=x_t,
                 timestep=timestep, 
                 packed_vae_token_indexes=packed_vae_token_indexes,
@@ -842,12 +860,13 @@ class Bagel(PreTrainedModel):
                 cfg_img_past_key_values=cfg_img_past_key_values,
                 cfg_img_packed_key_value_indexes=cfg_img_packed_key_value_indexes,
                 cfg_type=cfg_type,
+                update_past_key_values=update_past_key_values
             )
 
             x_t = x_t - v_t.to(x_t.device) * dts[i] # velocity pointing from data to noise
 
         unpacked_latent = x_t.split((packed_seqlens - 2).tolist())
-        return unpacked_latent
+        return unpacked_latent, past_key_values
 
     @torch.no_grad
     def _forward_flow(
@@ -881,6 +900,7 @@ class Bagel(PreTrainedModel):
         cfg_img_past_key_values: Optional[NaiveCache] = None,
         cfg_img_packed_key_value_indexes: Optional[torch.LongTensor] = None,
         cfg_type: str = "parallel",
+        update_past_key_values: bool = False,
     ):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
@@ -910,13 +930,15 @@ class Bagel(PreTrainedModel):
             past_key_values=past_key_values,
             key_values_lens=key_values_lens,
             packed_key_value_indexes=packed_key_value_indexes,
-            update_past_key_values=False,
+            update_past_key_values=update_past_key_values,
             is_causal=False,
             **extra_inputs,
         )
         v_t = self.llm2vae(output.packed_query_sequence)
         v_t = v_t[packed_vae_token_indexes]
-
+        if update_past_key_values:
+            cfg_text_scale = 1.0
+            cfg_img_scale = 1.0
         if cfg_text_scale > 1.0:
             cfg_text_output = self.language_model.forward_inference(
                 packed_query_sequence=packed_sequence,
@@ -983,7 +1005,7 @@ class Bagel(PreTrainedModel):
             # No CFG
             pass
 
-        return v_t
+        return v_t, output.past_key_values
 
     def prepare_start_tokens(self, curr_kvlens, curr_rope, new_token_ids):
         packed_start_tokens, packed_key_value_indexes = list(), list()
@@ -1000,6 +1022,55 @@ class Bagel(PreTrainedModel):
             "packed_start_tokens": torch.tensor(packed_start_tokens, dtype=torch.long),
             "packed_query_position_ids": torch.tensor(packed_query_position_ids, dtype=torch.long),
             "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
+            "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
+        }
+
+        return generation_input
+
+    def prepare_action(self, curr_kvlens, curr_rope, new_token_ids):
+        packed_text_ids, packed_text_indexes = list(), list()
+        packed_action_position_ids, packed_action_token_indexes = list(), list()
+        packed_query_position_ids, packed_seqlens, packed_query_indexes = list(), list(), list()
+        packed_key_value_indexes = list()
+        newlens = list()
+        new_rope = list()
+
+        _curr = curr = 0
+        for curr_kvlen, curr_position_id in zip(curr_kvlens, curr_rope):
+            packed_key_value_indexes.extend(range(curr, curr + curr_kvlen))
+            curr += curr_kvlen
+
+            packed_text_ids.append(new_token_ids['boa_token_id'])
+            packed_text_indexes.append(_curr)
+            packed_query_indexes.append(curr)
+            curr += 1
+            _curr += 1
+
+            num_action_tokens = self.action_horizon * self.action_dim
+            packed_action_token_indexes.extend(range(_curr, _curr + num_action_tokens))
+            packed_query_indexes.extend(range(curr, curr + num_action_tokens))
+            curr += num_action_tokens
+            _curr += num_action_tokens
+
+            packed_text_ids.append(new_token_ids['eoa_token_id'])
+            packed_text_indexes.append(_curr)
+            packed_query_indexes.append(curr)
+            curr += 1
+            _curr += 1
+
+            packed_query_position_ids.extend([curr_position_id] * (num_action_tokens + 2))
+            packed_seqlens.append(num_action_tokens + 2)
+            newlens.append(curr_kvlen + num_action_tokens + 2)
+            new_rope.append(curr_position_id + 1)
+
+        generation_input = {
+            "packed_text_ids": torch.tensor(packed_text_ids, dtype=torch.long),
+            "packed_text_indexes": torch.tensor(packed_text_indexes, dtype=torch.long),
+            "packed_action_token_indexes": torch.tensor(packed_action_token_indexes, dtype=torch.long),
+            "packed_seqlens": torch.tensor(packed_seqlens, dtype=torch.int),
+            "packed_query_position_ids": torch.tensor(packed_query_position_ids, dtype=torch.long),
+            "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
+            "packed_query_indexes": torch.tensor(packed_query_indexes, dtype=torch.long),
             "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
         }
 
@@ -1076,6 +1147,48 @@ class Bagel(PreTrainedModel):
                 break
 
         output_device = generated_sequence[0].device
+        return torch.stack([i.to(output_device) for i in generated_sequence], dim=0)
+
+    @torch.no_grad
+    def generate_action(
+        self,
+        packed_text_ids: torch.LongTensor,
+        packed_text_indexes: torch.LongTensor,
+        packed_vae_token_indexes: torch.LongTensor,
+        packed_seqlens: torch.IntTensor,
+        past_key_values: NaiveCache,
+        key_values_lens: torch.IntTensor,
+        packed_key_value_indexes: torch.LongTensor,
+        query_lens: torch.LongTensor,
+        packed_action_token_indexes: torch.LongTensor,
+        packed_query_position_ids: torch.LongTensor,
+        packed_query_indexes: torch.LongTensor,
+    ):
+        packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
+        packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
+        packed_sequence[packed_text_indexes] = packed_text_embedding
+        
+        extra_inputs = {}
+        if self.use_moe:
+            extra_inputs = {
+                "mode": "action",
+                "packed_action_token_indexes": packed_action_token_indexes,
+                "packed_vae_token_indexes": packed_vae_token_indexes,
+                "packed_text_indexes": packed_text_indexes,
+            }  
+
+        output = self.language_model.forward_inference(
+            packed_query_sequence=packed_sequence,
+            query_lens=query_lens,
+            packed_query_position_ids=packed_query_position_ids,
+            packed_query_indexes=packed_query_indexes,
+            past_key_values=past_key_values,
+            key_values_lens=key_values_lens,
+            packed_key_value_indexes=packed_key_value_indexes,
+            update_past_key_values=True,
+            is_causal=False,
+            **extra_inputs,
+        )
         return torch.stack([i.to(output_device) for i in generated_sequence], dim=0)
 
     # for evaluation

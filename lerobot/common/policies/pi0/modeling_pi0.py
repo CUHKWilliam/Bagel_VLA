@@ -96,6 +96,8 @@ import numpy as np
 import torch
 import cv2
 from .tokenizer import ActionTokenizer
+from PIL import Image
+from safetensors.torch import load_file
 
 def autocast(data_batch, dtype1, dtype2):
     for key in data_batch.keys():
@@ -172,7 +174,7 @@ class ModelArguments:
         metadata={"help": "Path or repo ID of the SigLIP Vision Transformer used for image understanding."}
     )
     max_latent_size: int = field(
-        default=32,
+        default=64,
         metadata={"help": "Maximum latent grid size (patches per side) for the VAE latent tensor."}
     )
     latent_patch_size: int = field(
@@ -623,7 +625,7 @@ class PI0Policy(PreTrainedPolicy):
         return self.parameters()
 
     @torch.no_grad
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -631,48 +633,14 @@ class PI0Policy(PreTrainedPolicy):
         queue is empty.
         """
         self.eval()
-
-        if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
-
-        batch = self.normalize_inputs(batch)
-
-        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
-        # querying the policy.
-        if len(self._action_queue) == 0:
-            images, img_masks = self.prepare_images(batch)
-            state = self.prepare_state(batch)
-            lang_tokens, lang_masks = self.prepare_language(batch)
-
-            actions = self.model.sample_actions(
-                images, img_masks, lang_tokens, lang_masks, state, noise=noise
-            )
-
-            # Unpad actions
-            original_action_dim = self.config.action_feature.shape[0]
-            actions = actions[:, :, :original_action_dim]
-
-            actions = self.unnormalize_outputs({"action": actions})["action"]
-
-            if self.config.adapt_to_pi_aloha:
-                actions = self._pi_aloha_encode_actions(actions)
-
-            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+        actions, predicted_images = self.model.sample_actions(batch)
+        # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+        # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+        return actions, predicted_images
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
-        if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
-            batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
 
-        # batch = self.normalize_inputs(batch)
-        # batch = self.normalize_targets(batch)
-        # images, img_masks = self.prepare_images(batch)
-        # state = self.prepare_state(batch)
-        # lang_tokens, lang_masks = self.prepare_language(batch)
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
@@ -812,17 +780,6 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         self.config = config
 
-        # paligemma_with_export_config = PaliGemmaWithExpertConfig(
-        #     freeze_vision_encoder=self.config.freeze_vision_encoder,
-        #     train_expert_only=self.config.train_expert_only,
-        #     attention_implementation=self.config.attention_implementation,
-        # )
-        # self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
-        # self.bagel_model = Bagel() ## TODO:
-        # global bagel_model
-        # self.bagel_model = bagel_model
-        # Projections are float32
-
         if training_args.auto_resume:
             resume_from = get_latest_ckpt(training_args.checkpoint_dir)
             if resume_from is None:
@@ -896,12 +853,16 @@ class PI0FlowMatching(nn.Module):
             vit_model if training_args.visual_und else None, 
             self.bagel_config
         )
-        
         if training_args.visual_und:
             bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
+        model_state_dict_path = os.path.join(model_args.model_path, "ema.safetensors")
+        model_state_dict = load_file(model_state_dict_path, device="cpu")
+        msg = bagel_model.load_state_dict(model_state_dict, strict=False)
+        print(f"load Bagel: {msg}")
 
         tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path if training_args.finetune_from_hf else model_args.llm_path)
         tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
+        self.new_token_ids = new_token_ids
         if num_new_tokens > 0:
             bagel_model.language_model.resize_token_embeddings(len(tokenizer))
             bagel_model.config.llm_config.vocab_size = len(tokenizer)
@@ -947,6 +908,8 @@ class PI0FlowMatching(nn.Module):
             interpolate_pos=model_args.interpolate_pos,
             use_flex=training_args.use_flex,
             data_status=None,
+            action_dim=self.bagel_model.config.action_dim,
+            action_horizon = self.bagel_model.config.action_horizon,
         )
         self.action_tokenizer = ActionTokenizer(
             tokenizer=tokenizer,
@@ -954,8 +917,6 @@ class PI0FlowMatching(nn.Module):
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.act_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
         self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, self.action_tokenizer.n_bins)
-
-   
         self.set_requires_grad()
 
 
@@ -983,13 +944,13 @@ class PI0FlowMatching(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         datas = self.dataset(batch)
         data_batch = SimpleCustomBatch(datas).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
-        data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
         if training_args.visual_gen:
+            data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
             with torch.no_grad():
                 data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
         if "packed_action_tokens" in data_batch.keys():
             with torch.no_grad():
-                data_batch['packed_action_tokens'] = torch.tensor(self.action_tokenizer(data_batch['packed_action_tokens'].detach().cpu().numpy())).to(f"cuda:{torch.cuda.current_device()}")
+                data_batch['packed_action_tokens'] = torch.tensor(self.action_tokenizer(data_batch['packed_action_tokens'].float().detach().cpu().numpy())).to(f"cuda:{torch.cuda.current_device()}")
         return data_batch
 
     def embed_suffix(self, noisy_actions, timestep):
@@ -1104,49 +1065,140 @@ class PI0FlowMatching(nn.Module):
     def generate_image(self, images, instruction, ):
         self.bagel_model.chat(self.tokenizer, )
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
-        bsize = state.shape[0]
-        device = state.device
+    def sample_actions(self, batch) -> Tensor:
+        device = next(self.bagel_model.parameters()).device
+        new_token_ids = self.new_token_ids
+        if isinstance(new_token_ids, dict):
+            for k, v in new_token_ids.items():
+                if torch.is_tensor(v):
+                    new_token_ids[k] = v.to(device)
+        elif torch.is_tensor(new_token_ids):
+            new_token_ids = new_token_ids.to(device)
 
-        if noise is None:
-            actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
-            noise = self.sample_noise(actions_shape, device)
+        # prefill
+        past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+        newlens = [0]
+        new_rope = [0]
 
-        generation_input, newlens, new_rope, past_key_values = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
+        observation_images = []
+        for key in batch.keys():
+            if "images." in key and "observation" in key:
+                observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+        observation_image = cv2.hconcat(observation_images)
+        
+        # add images
+        image = Image.fromarray(observation_image)
+        generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
+            curr_kvlens=newlens,
+            curr_rope=new_rope, 
+            images=[image], 
+            transforms=self.dataset.dataset.vit_transform,
+            new_token_ids=new_token_ids,
         )
-        # prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        # prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        ## Compute image and language key value cache
-        # _, past_key_values = self.paligemma_with_expert.forward(
-        #     attention_mask=prefix_att_2d_masks,
-        #     position_ids=prefix_position_ids,
-        #     past_key_values=None,
-        #     inputs_embeds=[prefix_embs, None],
-        #     use_cache=self.config.use_cache,
-        #     fill_kv_cache=True,
+        for k, v in generation_input.items():
+            if torch.is_tensor(v):
+                generation_input[k] = v.to(device)
+        generation_input = autocast(generation_input, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
+        past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+
+        # add text
+        prompt = "Instruction:" + batch['task'][0] + "."
+        generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
+            curr_kvlens=newlens,
+            curr_rope=new_rope, 
+            prompts=[prompt],
+            tokenizer=self.dataset.tokenizer, 
+            new_token_ids=new_token_ids,
+        )
+        for k, v in generation_input.items():
+            if torch.is_tensor(v):
+                generation_input[k] = v.to(device)
+        past_key_values = self.bagel_model.forward_cache_update_text(past_key_values, **generation_input)
+
+        # TODO: decode for text generation
+        # generation_input = self.prepare_start_tokens(newlens, new_rope, new_token_ids)
+        # for k, v in generation_input.items():
+        #     if torch.is_tensor(v):
+        #         generation_input[k] = v.to(device)
+        # unpacked_latent = self.generate_text(
+        #     past_key_values=past_key_values,
+        #     max_length=max_length,
+        #     do_sample=do_sample,
+        #     temperature=temperature,
+        #     end_token_id=new_token_ids['eos_token_id'],
+        #     **generation_input,
         # )
-
-        dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
-
-        x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                state,
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
+        # output = tokenizer.decode(unpacked_latent[:,0])
+        # output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
+        
+        if training_args.visual_gen:
+            resolution = tuple(observation_image.shape[:2])
+            generation_input, newlens, new_rope = self.bagel_model.prepare_vae_latent(
+                curr_kvlens=newlens,
+                curr_rope=new_rope, 
+                image_sizes=[resolution], 
+                new_token_ids=new_token_ids,
             )
+            for k, v in generation_input.items():
+                if torch.is_tensor(v):
+                    generation_input[k] = v.to(device)
+            cfg_past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+            cfg_newlens = [0]
+            cfg_new_rope = [0]
+            generation_input_cfg = self.bagel_model.prepare_vae_latent_cfg(
+                curr_kvlens=cfg_newlens,
+                curr_rope=cfg_new_rope, 
+                image_sizes=[resolution],
+            )
+            for k, v in generation_input_cfg.items():
+                if torch.is_tensor(v):
+                    generation_input_cfg[k] = v.to(device)
+            num_timesteps = 50 ## TODO: set timesteps here
+            cfg_scale = 4
+            cfg_interval = [0., 1.]
+            timestep_shift = 3.0
+            cfg_renorm_min = 0.0
+            unpacked_latent, past_key_values = self.bagel_model.generate_image(
+                past_key_values=past_key_values,
+                num_timesteps=num_timesteps,
+                cfg_text_scale=cfg_scale,
+                cfg_interval=cfg_interval,
+                cfg_renorm_min=cfg_renorm_min,
+                timestep_shift=timestep_shift,
+                cfg_text_past_key_values=cfg_past_key_values,
+                cfg_text_packed_position_ids=generation_input_cfg["cfg_packed_position_ids"],
+                cfg_text_key_values_lens=generation_input_cfg["cfg_key_values_lens"],
+                cfg_text_packed_query_indexes=generation_input_cfg["cfg_packed_query_indexes"],
+                cfg_text_packed_key_value_indexes=generation_input_cfg["cfg_packed_key_value_indexes"],
+                **generation_input,
+            )
+            image_list = []
+            for latent in unpacked_latent:
+                latent = latent.reshape(1, resolution[0]//16, resolution[1]//16, 2, 2, 16)
+                latent = torch.einsum("nhwpqc->nchpwq", latent)
+                latent = latent.reshape(1, 16, resolution[0]//8, resolution[1]//8)
+                image = self.vae_model.decode(latent.to(device))
+                tmpimage = ((image * 0.5 + 0.5).clamp(0, 1)[0].permute(1, 2, 0) * 255).to(torch.uint8).cpu().numpy()
+                tmpimage = Image.fromarray(tmpimage)
+                image_list.append(tmpimage)
+            predict_images = image_list
+        else:
+            predict_images = None
+        import ipdb;ipdb.set_trace()
+        generation_input = self.bagel_model.prepare_action(newlens, new_rope, new_token_ids)
+        for k, v in generation_input.items():
+            if torch.is_tensor(v):
+                generation_input[k] = v.to(device)
+        unpacked_latent = self.bagel_model.generate_action(
+            past_key_values=past_key_values,
+            **generation_input,
+        )
+        import ipdb;ipdb.set_tracde()
+        action_pred = self.act_out_proj(unpacked_latent["action_loss_indexes"])
+        output = tokenizer.decode(unpacked_latent[:,0])
+        output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
 
-            # Euler step
-            x_t += dt * v_t
-            time += dt
-        return x_t
+        return action_pred, predict_images
 
     def denoise_step(
         self,

@@ -48,14 +48,14 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             img = torch.from_numpy(img)
 
             # sanity check that images are channel last
-            _, h, w, c = img.shape
+            h, w, c = img.shape
             assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
 
             # sanity check that images are uint8
             assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
 
             # convert to channel first of type float32 in range [0,1]
-            img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
+            img = einops.rearrange(img, "h w c -> c h w").contiguous()
             img = img.type(torch.float32)
             img /= 255
 
@@ -68,7 +68,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     # requirement for "agent_pos"
-    return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
+    # return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
     return return_observations
 
 

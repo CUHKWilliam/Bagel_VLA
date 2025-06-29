@@ -621,7 +621,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
             hf_dataset = load_dataset("parquet", data_files=files, split="train")
-
         # TODO(aliberts): hf_dataset.set_format("torch")
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
@@ -732,12 +731,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = {**item, **padding}
             for key, val in query_result.items():
                 item[key] = val
-
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
+            next_timestamps = self._get_query_timestamps(current_ts + 0.5, query_indices) ## TODO: set next timestamp delta time
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
+            next_video_frames = self._query_videos(next_timestamps, ep_idx)
+            next_video_frames2 = {}
+            for k in next_video_frames.keys():
+                next_video_frames2[f"next.{k.replace('observation.', '')}"] = next_video_frames[k]
+            item = {**video_frames, **item, **next_video_frames2}
 
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys

@@ -47,7 +47,7 @@ class WandBConfig:
     project: str = "lerobot"
     entity: str | None = None
     notes: str | None = None
-    run_id: str | None = None
+    run_id: str | None = None ## TODO: set wandb id later
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
 
 

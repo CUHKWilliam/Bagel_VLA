@@ -80,9 +80,11 @@ from lerobot.common.utils.utils import (
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 
+import libero
 
 def rollout(
-    env: gym.vector.VectorEnv,
+    env,
+    env_id,
     policy: PreTrainedPolicy,
     seeds: list[int] | None = None,
     return_observations: bool = False,
@@ -124,9 +126,18 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-    observation, info = env.reset(seed=seeds)
+    observations = env.step([0] * 7)
+    observation1 = observations[0]['agentview_image']
+    observation2 = observations[0]['robot0_eye_in_hand_image']
+    observation = {
+        "pixels":{
+            "agentview_image": observation1,
+            "robot0_eye_in_hand_image": observation2,
+        }
+    }
+
     if render_callback is not None:
-        render_callback(env)
+        render_callback(env, env_id)
 
     all_observations = []
     all_actions = []
@@ -136,32 +147,33 @@ def rollout(
 
     step = 0
     # Keep track of which environments are done.
-    done = np.array([False] * env.num_envs)
-    max_steps = env.call("_max_episode_steps")[0]
+    done = False
+    # max_steps = env.call("_max_episode_steps")[0]
+    max_steps = 500 ## TODO:
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
-    check_env_attributes_and_types(env)
-    while not np.all(done):
+    # check_env_attributes_and_types(env)
+    observation_predicted_images = []
+    while not done:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
-
         observation = {
-            key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
+            key: observation[key].to(device, non_blocking=device.type == "cuda").unsqueeze(0) for key in observation
         }
-
+        observation['action'] = torch.zeros((1, 5, 7)) ## TODO: set action horizon
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
-        observation = add_envs_task(env, observation)
-
+        # observation = add_envs_task(env, observation)
+        observation['task'] = [env.language_instruction]
         with torch.inference_mode():
-            action = policy.select_action(observation)
-
+            action, predicted_images = policy.select_action(observation)
+        import ipdb;ipdb.set_trace()
         # Convert to CPU / numpy.
         action = action.to("cpu").numpy()
         assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
@@ -173,10 +185,11 @@ def rollout(
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
+        import ipdb;ipdb.set_trace()
         if "final_info" in info:
             successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
         else:
-            successes = [False] * env.num_envs
+            successes = False
 
         # Keep track of which environments are done so far.
         done = terminated | truncated | done
@@ -218,7 +231,7 @@ def rollout(
 
 
 def eval_policy(
-    env: gym.vector.VectorEnv,
+    envs,
     policy: PreTrainedPolicy,
     n_episodes: int,
     max_episodes_rendered: int = 0,
@@ -253,7 +266,8 @@ def eval_policy(
 
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
-    n_batches = n_episodes // env.num_envs + int((n_episodes % env.num_envs) != 0)
+    num_envs = len(envs)
+    n_batches = n_episodes // num_envs + int((n_episodes % num_envs) != 0)
 
     # Keep track of some metrics.
     sum_rewards = []
@@ -264,16 +278,14 @@ def eval_policy(
     n_episodes_rendered = 0  # for saving the correct number of videos
 
     # Callback for visualization.
-    def render_frame(env: gym.vector.VectorEnv):
+    def render_frame(env, env_id):
         # noqa: B023
         if n_episodes_rendered >= max_episodes_rendered:
             return
-        n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
-        if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
-        elif isinstance(env, gym.vector.AsyncVectorEnv):
-            # Here we must render all frames and discard any we don't need.
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+        image = env.step([0] * 7)[0]['agentview_image']
+        if env_id not in ep_frames.keys():
+            ep_frames[env_id] = []
+        ep_frames[env_id].append(image)
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -287,22 +299,32 @@ def eval_policy(
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
         if max_episodes_rendered > 0:
-            ep_frames: list[np.ndarray] = []
+            ep_frames = {}
 
         if start_seed is None:
             seeds = None
         else:
             seeds = range(
-                start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
+                start_seed + (batch_ix * num_envs), start_seed + ((batch_ix + 1) * num_envs)
             )
-        rollout_data = rollout(
-            env,
-            policy,
-            seeds=list(seeds) if seeds else None,
-            return_observations=return_episode_data,
-            render_callback=render_frame if max_episodes_rendered > 0 else None,
-        )
-
+        rollout_data = {
+            "done": [],
+            "reward": [],
+            "success": []
+        }
+        for env_idx, env in enumerate(envs):
+            a_rollout_data = rollout(
+                env,
+                env_idx,
+                policy,
+                seeds=list(seeds) if seeds else None,
+                return_observations=return_episode_data,
+                render_callback=render_frame if max_episodes_rendered > 0 else None,
+            )
+            for key in rollout_data.keys():
+                rollout_data[key].append(a_rollout_data[key])
+        for key in rollout_data.keys():
+            rollout_data[key] = torch.cat(rollout_data[key])
         # Figure out where in each rollout sequence the first done condition was encountered (results after
         # this won't be included).
         n_steps = rollout_data["done"].shape[1]
@@ -344,22 +366,23 @@ def eval_policy(
 
         # Maybe render video for visualization.
         if max_episodes_rendered > 0 and len(ep_frames) > 0:
-            batch_stacked_frames = np.stack(ep_frames, axis=1)  # (b, t, *)
-            for stacked_frames, done_index in zip(
-                batch_stacked_frames, done_indices.flatten().tolist(), strict=False
+            for env_id, done_index in enumerate(
+                done_indices.flatten().tolist(), strict=False
             ):
+                a_ep_frames = ep_frames[env_id]
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
 
                 videos_dir.mkdir(parents=True, exist_ok=True)
                 video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
+                import ipdb;idpb.set_trace()
                 thread = threading.Thread(
                     target=write_video,
                     args=(
                         str(video_path),
-                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
-                        env.unwrapped.metadata["render_fps"],
+                        a_ep_frames[: done_index + 1],  # + 1 to capture the last observation
+                        20, ## TODO: set fps
                     ),
                 )
                 thread.start()

@@ -53,6 +53,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 from accelerate import Accelerator
 from accelerate.utils import set_seed as accelerate_set_seed
+import os
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -67,30 +68,18 @@ def update_policy(
     device = get_device_from_parameters(policy)
     policy.train()
     loss, output_dict = policy.forward(batch)
-    accelerator.backward(loss)
+    policy.backward(loss)
 
-    # Gradient clipping - accelerator handles unscaling automatically
-    if accelerator.sync_gradients and grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-    else:
-        grad_norm = torch.tensor(0.0)
-
-    optimizer.step()
+    policy.step()
     lr_scheduler.step() if lr_scheduler is not None else None
 
-    optimizer.zero_grad()
-
-    if has_method(policy, "update"):
-        # To possibly update an internal buffer (for instance an Exponential Moving Average like in TDMPC).
-        policy.update()
-    
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
-    grad_norm_value = accelerator.gather(grad_norm).mean().item()
+    # grad_norm_value = accelerator.gather(grad_norm).mean().item()
 
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
-    train_metrics.lr = optimizer.param_groups[0]["lr"]
+    # train_metrics.grad_norm = grad_norm.item()
+    # train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
@@ -161,22 +150,48 @@ def train(cfg: TrainPipelineConfig):
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
-    eval_env = None
-    if cfg.eval_freq > 0 and cfg.env is not None and accelerator.is_main_process:
-        logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+    eval_envs = None
+    # if cfg.eval_freq > 0 and cfg.env is not None and accelerator.is_main_process: ## TODO:
+    if True:
+        logging.info("Creating libero env")
+        from libero.libero import benchmark
+        from libero.libero.envs import OffScreenRenderEnv
+        from libero.libero import get_libero_path
+        benchmark_dict = benchmark.get_benchmark_dict()
+        task_suite_name = "libero_10" # can also choose libero_spatial, libero_object, etc.
+        task_suite = benchmark_dict[task_suite_name]()
+        task_id = 0
+        task = task_suite.get_task(task_id)
+        task_name = task.name
+        task_description = task.language
+        task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+        print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
+            f"language instruction is {task_description}, and the bddl file is {task_bddl_file}")
+        
+        # step over the environment
+        env_args = {
+            "bddl_file_name": task_bddl_file,
+            "camera_heights": 128,
+            "camera_widths": 128
+        }
+        env = OffScreenRenderEnv(**env_args)
+        env.seed(0)
+        env.reset()
+        eval_envs = [env]
+
     if accelerator.is_main_process:
         logging.info("Creating policy")
+    cfg.policy.device = "cpu"
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,
-    )
+    ).cpu()
+    torch.cuda.empty_cache()
     if accelerator.is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     step = 0  # number of policy updates (forward + backward + optim)
-
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
 
@@ -194,7 +209,7 @@ def train(cfg: TrainPipelineConfig):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=cfg.num_workers,
+        num_workers=0, ## TODO: set worker
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
@@ -204,9 +219,10 @@ def train(cfg: TrainPipelineConfig):
     # Prepare for distributed training
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, 
-        optimizer, 
+        # optimizer, 
+        None,
         dataloader, 
-        lr_scheduler
+        None,
     )
 
     # Log training info (only on main process)
@@ -252,7 +268,7 @@ def train(cfg: TrainPipelineConfig):
             dl_iter = iter(dataloader)
             batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
-
+    
         train_tracker, output_dict = update_policy(
             train_tracker,
             policy,
@@ -262,7 +278,6 @@ def train(cfg: TrainPipelineConfig):
             accelerator,
             lr_scheduler=lr_scheduler,
         )
-
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
@@ -271,9 +286,7 @@ def train(cfg: TrainPipelineConfig):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
-        # if is_log_step and accelerator.is_main_process: ##TODO:
-        import ipdb;ipdb.set_trace()
-        if True:
+        if is_log_step and accelerator.is_main_process:
             logging.info(train_tracker)
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
@@ -293,7 +306,8 @@ def train(cfg: TrainPipelineConfig):
             save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
 
-        if cfg.env and is_eval_step and accelerator.is_main_process:
+        if True:
+        # if is_eval_step and accelerator.is_main_process: ## TODO:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
             # Unwrap model for evaluation
@@ -303,7 +317,7 @@ def train(cfg: TrainPipelineConfig):
                 torch.no_grad(),
             ):
                 eval_info = eval_policy(
-                    eval_env,
+                    eval_envs,
                     unwrapped_policy,
                     cfg.eval.n_episodes,
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
@@ -335,8 +349,9 @@ def train(cfg: TrainPipelineConfig):
     # Wait for all processes to finish
     accelerator.wait_for_everyone()
 
-    if eval_env and accelerator.is_main_process:
-        eval_env.close()
+    if eval_envs and accelerator.is_main_process:
+        for eval_env in eval_envs:
+            eval_env.close()
     if accelerator.is_main_process:
         logging.info("End of training")
 

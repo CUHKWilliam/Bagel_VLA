@@ -31,7 +31,7 @@ from PIL import Image
 
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
+        return "pyav"
     else:
         logging.warning(
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
@@ -191,7 +191,7 @@ def decode_video_frames_torchcodec(
         raise ImportError("torchcodec is required but not available.")
 
     # initialize video decoder
-    decoder = VideoDecoder(video_path, device=device, seek_mode="approximate")
+    decoder = VideoDecoder(video_path, device=device, )
     loaded_frames = []
     loaded_ts = []
     # get metadata for frame information

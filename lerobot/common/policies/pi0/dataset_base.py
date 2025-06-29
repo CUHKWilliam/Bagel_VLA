@@ -244,6 +244,7 @@ class InterleavedBaseIterableDataset:
         assert need_loss or need_vae or need_vit
 
         if need_loss:
+            assert need_vae
             data['sequence_plan'].append(
                 {
                     'type': 'vae_image', 
@@ -257,22 +258,6 @@ class InterleavedBaseIterableDataset:
             height, width = image_tensor.shape[1:]
             data['num_tokens'] += width * height // self.transform.stride ** 2
             data['image_tensor_list'].append(image_tensor)
-
-        if need_vae:
-            data['sequence_plan'].append(
-                {
-                    'type': 'vae_image', 
-                    'enable_cfg': int(enable_cfg), 
-                    'loss': 0, 
-                    'special_token_loss': 0,
-                    'special_token_label': None,
-                }
-            )
-
-            image_tensor = self.transform(image)
-            height, width = image_tensor.shape[1:]
-            data['num_tokens'] += width * height // self.transform.stride ** 2
-            data['image_tensor_list'].append(image_tensor.clone())
 
         if need_vit:
             data['sequence_plan'].append(
@@ -337,46 +322,56 @@ class InterleavedBaseIterableDataset:
 
 
 class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
-    def __init__(self, transform, vit_transform, tokenizer):
+    def __init__(self, transform, vit_transform, tokenizer, action_horizon=5, action_dim=7):
         super().__init__(transform, vit_transform, tokenizer)
+        self.action_horizon, self.action_dim = action_horizon, action_dim
 
     def __call__(self, sample):
-        images0 = (sample['observation.images.laptop'].detach().cpu().numpy().transpose((0, 2, 3, 1)) * 255).astype(np.uint8)
-        images1 = np.zeros_like(images0).astype(np.uint8)
-        images0 = np.stack([cv2.resize(images0[i], (16, 16)) for i in range(len(images0))], axis=0)
-        images1 = np.stack([cv2.resize(images1[i], (16, 16)) for i in range(len(images1))], axis=0)
-
-        image_num = 2
-        start_idx, end_idx = 0, 1
+        batch_size = len(sample['task'])
         datas = []
-        for idx in range(len(images1)):
+        for batch_idx in range(batch_size):
+            observation_images = []
+            for key in sample.keys():
+                if "images." in key and "observation" in key:
+                    observation_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+            observation_image = cv2.hconcat(observation_images)
             data = self._init_data()
+            instruction = "Instruction:" + sample['task'][batch_idx] + "."
             data = self._add_image(
                 data, 
-                pil_img2rgb(Image.fromarray(images0[idx])),
+                pil_img2rgb(Image.fromarray(observation_image)),
                 need_loss=False, 
-                need_vae=True, 
+                need_vae=False, 
                 need_vit=True, 
             )
-            instructions = sample['task']
-            data = self._add_text(data, instructions[idx], need_loss=False)
+            data = self._add_text(data, instruction, need_loss=False)
+            next_images = []
+            for key in sample.keys():
+                if "images." in key and "next" in key:
+                    next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+            if len(next_images) == 0:
+                for i in range(len(observation_images)):
+                    next_images.append(np.zeros_like(observation_images[i]).astype(np.uint8))
+            next_img_num = len(next_images)
+            next_images = cv2.hconcat(next_images)
             data = self._add_image(
                 data, 
-                pil_img2rgb(Image.fromarray(images1[idx])),
+                pil_img2rgb(Image.fromarray(next_images)),
                 need_loss=True, 
                 need_vae=True, 
-                need_vit=True,
+                need_vit=False, 
             )
-            actions = sample['action']
-            actions = actions[:, :5, :] ##TODO: set action steps
-            if actions.size(1) == 6:
-                actions = torch.cat([actions, torch.zeros((actions.size(0), actions.size(1), 1))], dim=-1)
-            sample['action'] = actions
-            data = self._add_action(
-                data,
-                sample['action'],
-                need_loss=True,
-            )
+            if "action" in sample.keys():
+                actions = sample['action']
+                actions = actions[:, :self.action_horizon, :]
+                if actions.size(1) == 6:
+                    actions = torch.cat([actions, torch.zeros((actions.size(0), actions.size(1), 1))], dim=-1)
+                sample['action'] = actions
+                data = self._add_action(
+                    data,
+                    sample['action'],
+                    need_loss=True,
+                )
             datas.append(data)
         return datas
     
@@ -384,6 +379,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         action = action[5]
         action_text = str(action) ## TODO:
         return action_text
+
 
 
 
@@ -423,6 +419,8 @@ class PackedDataset:
         interpolate_pos=False,
         use_flex=False,
         data_status=None,
+        action_dim=7,
+        action_horizon=5,
     ):
         self.expected_num_tokens = expected_num_tokens
         self.max_num_tokens_per_sample = max_num_tokens_per_sample
@@ -433,7 +431,7 @@ class PackedDataset:
         self.use_flex = use_flex
         for k, v in special_tokens.items():
             setattr(self, k, v)
-
+        self.action_dim, self.action_horizon = action_dim, action_horizon
         self.dataset = self.build_datasets("unified_edit")
         self.data_config = data_config
         self.interpolate_pos = interpolate_pos
@@ -446,17 +444,17 @@ class PackedDataset:
         dataset_args = {
             "image_transform_args": {
                 "image_stride": 16,
-                # "max_image_size": 1024,
-                # "min_image_size": 512
-                "max_image_size": 128,
-                "min_image_size": 64
+                "max_image_size": 1024,
+                "min_image_size": 512
+                # "max_image_size": 128,
+                # "min_image_size": 64
             },
             "vit_image_transform_args":{
                 "image_stride": 14,
-                # "max_image_size": 518,
-                # "min_image_size": 224
-                "max_image_size": 128,
-                "min_image_size": 64
+                "max_image_size": 518,
+                "min_image_size": 224
+                # "max_image_size": 128,
+                # "min_image_size": 64
             },
             "is_mandatory": False,
         }
@@ -465,7 +463,8 @@ class PackedDataset:
         vit_transform = ImageTransform(**dataset_args.pop('vit_image_transform_args'))
         dataset_args['vit_transform'] = vit_transform
 
-        data = UnifiedEditIterableDataset(transform, vit_transform, self.tokenizer)
+        data = UnifiedEditIterableDataset(transform, vit_transform, self.tokenizer, 
+                action_dim = self.action_dim, action_horizon = self.action_horizon)
         return data
 
     def set_epoch(self, seed):
@@ -540,7 +539,6 @@ class PackedDataset:
             data['packed_vit_position_ids'] = torch.cat(sequence_status['packed_vit_position_ids'], dim=0)
             data['packed_vit_token_indexes'] = torch.tensor(sequence_status['packed_vit_token_indexes'])
             data['vit_token_seqlens'] = torch.tensor(sequence_status['vit_token_seqlens'])
-
         # if the model is required to perform visual generation
         if len(sequence_status['packed_timesteps']) > 0:
             data['packed_timesteps'] = torch.tensor(sequence_status['packed_timesteps'])
@@ -652,9 +650,6 @@ class PackedDataset:
                 
             elif item['type'] == 'vit_image':
                 image_tensor = image_tensor_list.pop(0)
-                if item['enable_cfg'] == 1 and random.random() < self.data_config.vit_cond_dropout_prob:
-                    curr_rope_id += 1
-                    continue
 
                 # add a <|startofimage|> token
                 sequence_status['packed_text_ids'].append(self.start_of_image)
