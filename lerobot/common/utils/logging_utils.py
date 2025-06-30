@@ -149,13 +149,14 @@ class MetricsTracker:
         """
         Returns the current metric values (or averages if `use_avg=True`) as a dict.
         """
-        return {
+        ret = {
             "steps": self.steps,
             "samples": self.samples,
             "episodes": self.episodes,
             "epochs": self.epochs,
             **{k: m.avg if use_avg else m.val for k, m in self.metrics.items()},
         }
+        return ret
 
     def reset_averages(self) -> None:
         """Resets average meters."""

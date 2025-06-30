@@ -79,7 +79,7 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
-
+import cv2
 import libero
 
 def rollout(
@@ -129,7 +129,7 @@ def rollout(
     observations = env.step([0] * 7)
     observation1 = observations[0]['agentview_image']
     observation2 = observations[0]['robot0_eye_in_hand_image']
-    observation = {
+    raw_observation = {
         "pixels":{
             "agentview_image": observation1,
             "robot0_eye_in_hand_image": observation2,
@@ -149,18 +149,12 @@ def rollout(
     # Keep track of which environments are done.
     done = False
     # max_steps = env.call("_max_episode_steps")[0]
-    max_steps = 500 ## TODO:
-    progbar = trange(
-        max_steps,
-        desc=f"Running rollout with at most {max_steps} steps",
-        disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
-        leave=False,
-    )
+    max_steps = 50 ## TODO:
     # check_env_attributes_and_types(env)
     observation_predicted_images = []
     while not done:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
+        observation = preprocess_observation(raw_observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
         observation = {
@@ -172,40 +166,43 @@ def rollout(
         # observation = add_envs_task(env, observation)
         observation['task'] = [env.language_instruction]
         with torch.inference_mode():
-            action, predicted_images = policy.select_action(observation)
-        import ipdb;ipdb.set_trace()
+            actions, predicted_images = policy.select_action(observation)
+        observation_image = cv2.hconcat([raw_observation['pixels']['agentview_image'], raw_observation['pixels']['robot0_eye_in_hand_image']])
+        if predicted_images is not None:
+            observation_predicted_image = cv2.vconcat([observation_image, np.asarray(predicted_images[0])])
+        else:
+            observation_predicted_image = observation_image
+        observation_predicted_images.append(observation_predicted_image)
         # Convert to CPU / numpy.
-        action = action.to("cpu").numpy()
-        assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
-
-        # Apply the next action.
-        observation, reward, terminated, truncated, info = env.step(action)
-        if render_callback is not None:
-            render_callback(env)
-
+        if isinstance(actions, torch.Tensor):
+            actions = actions.to("cpu").numpy()
+        success = False
+        for action in actions:
+            # Apply the next action.
+            try:
+                new_observation, reward, done, info = env.step(action)
+                success = env.check_success()
+                if success:
+                    break
+            except:
+                done = True
+                break
+            if render_callback is not None:
+                render_callback(env, env_id)
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
-        import ipdb;ipdb.set_trace()
-        if "final_info" in info:
-            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
-        else:
-            successes = False
-
-        # Keep track of which environments are done so far.
-        done = terminated | truncated | done
+        successes = success
 
         all_actions.append(torch.from_numpy(action))
-        all_rewards.append(torch.from_numpy(reward))
-        all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes))
+        all_rewards.append(torch.from_numpy(np.array(reward)))
+        all_dones.append(torch.from_numpy(np.array(done)))
+        all_successes.append(torch.tensor(int(successes)).bool())
 
         step += 1
-        running_success_rate = (
-            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
-        )
-        progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
-        progbar.update()
-
+        raw_observation['pixels'] = {
+            "agentview_image": new_observation['agentview_image'],
+            "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'],
+        }
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)
@@ -214,19 +211,19 @@ def rollout(
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
         "action": torch.stack(all_actions, dim=1),
-        "reward": torch.stack(all_rewards, dim=1),
-        "success": torch.stack(all_successes, dim=1),
-        "done": torch.stack(all_dones, dim=1),
+        "reward": torch.tensor(all_rewards),
+        "success": torch.tensor(all_successes),
+        "done": torch.tensor(all_dones),
+        "observation_predicted_images": observation_predicted_images,
     }
     if return_observations:
         stacked_observations = {}
         for key in all_observations[0]:
             stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
         ret["observation"] = stacked_observations
-
+    
     if hasattr(policy, "use_original_modules"):
         policy.use_original_modules()
-
     return ret
 
 
@@ -267,13 +264,12 @@ def eval_policy(
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
     num_envs = len(envs)
-    n_batches = n_episodes // num_envs + int((n_episodes % num_envs) != 0)
 
     # Keep track of some metrics.
     sum_rewards = []
     max_rewards = []
     all_successes = []
-    all_seeds = []
+    observation_predicted_images = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
@@ -294,64 +290,48 @@ def eval_policy(
         episode_data: dict | None = None
 
     # we dont want progress bar when we use slurm, since it clutters the logs
-    progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
-    for batch_ix in progbar:
+    for batch_ix in range(n_episodes):
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
         if max_episodes_rendered > 0:
             ep_frames = {}
 
-        if start_seed is None:
-            seeds = None
-        else:
-            seeds = range(
-                start_seed + (batch_ix * num_envs), start_seed + ((batch_ix + 1) * num_envs)
-            )
         rollout_data = {
             "done": [],
             "reward": [],
-            "success": []
+            "success": [],
+            "observation_predicted_images": [],
         }
         for env_idx, env in enumerate(envs):
+            env.seed(batch_ix)
+            env.reset()
             a_rollout_data = rollout(
                 env,
                 env_idx,
                 policy,
-                seeds=list(seeds) if seeds else None,
                 return_observations=return_episode_data,
                 render_callback=render_frame if max_episodes_rendered > 0 else None,
             )
             for key in rollout_data.keys():
                 rollout_data[key].append(a_rollout_data[key])
         for key in rollout_data.keys():
-            rollout_data[key] = torch.cat(rollout_data[key])
+            if "image" not in key:
+                rollout_data[key] = torch.cat(rollout_data[key])
         # Figure out where in each rollout sequence the first done condition was encountered (results after
         # this won't be included).
-        n_steps = rollout_data["done"].shape[1]
-        # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
-        done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
-
-        # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
-        # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
         # Extend metrics.
-        batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
-        sum_rewards.extend(batch_sum_rewards.tolist())
-        batch_max_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "max")
-        max_rewards.extend(batch_max_rewards.tolist())
-        batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
-        all_successes.extend(batch_successes.tolist())
-        if seeds:
-            all_seeds.extend(seeds)
-        else:
-            all_seeds.append(None)
+        sum_rewards.extend(rollout_data['reward'].tolist())
+        max_rewards.extend(rollout_data['reward'].tolist())
+        batch_successes = rollout_data['success']
+        all_successes.extend(batch_successes)
+        observation_predicted_images.extend(rollout_data['observation_predicted_images'][0])
 
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
             this_episode_data = _compile_episode_data(
                 rollout_data,
                 done_indices,
-                start_episode_index=batch_ix * env.num_envs,
+                start_episode_index=batch_ix * num_envs,
                 start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
                 fps=env.unwrapped.metadata["render_fps"],
             )
@@ -365,38 +345,30 @@ def eval_policy(
                 episode_data = {k: torch.cat([episode_data[k], this_episode_data[k]]) for k in episode_data}
 
         # Maybe render video for visualization.
+
         if max_episodes_rendered > 0 and len(ep_frames) > 0:
-            for env_id, done_index in enumerate(
-                done_indices.flatten().tolist(), strict=False
-            ):
+            for env_id in ep_frames.keys():
                 a_ep_frames = ep_frames[env_id]
-                if n_episodes_rendered >= max_episodes_rendered:
+                if env_id >= max_episodes_rendered:
                     break
 
                 videos_dir.mkdir(parents=True, exist_ok=True)
-                video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
+                video_path = videos_dir / f"eval_episode_{env_id}.mp4"
                 video_paths.append(str(video_path))
-                import ipdb;idpb.set_trace()
                 thread = threading.Thread(
                     target=write_video,
                     args=(
                         str(video_path),
-                        a_ep_frames[: done_index + 1],  # + 1 to capture the last observation
+                        a_ep_frames,  # + 1 to capture the last observation
                         20, ## TODO: set fps
                     ),
                 )
                 thread.start()
                 threads.append(thread)
-                n_episodes_rendered += 1
-
-        progbar.set_postfix(
-            {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
-        )
 
     # Wait till all video rendering threads are done.
     for thread in threads:
         thread.join()
-
     # Compile eval info.
     info = {
         "per_episode": [
@@ -404,25 +376,25 @@ def eval_policy(
                 "episode_ix": i,
                 "sum_reward": sum_reward,
                 "max_reward": max_reward,
+                "video_path": video_paths[i] if i < len(video_paths) else None,
+                "observation_predicted_images": observation_predicted_images[i] if i < 10 else None, ## TODO: limit image number
                 "success": success,
-                "seed": seed,
             }
-            for i, (sum_reward, max_reward, success, seed) in enumerate(
+            for i, (sum_reward, max_reward, success) in enumerate(
                 zip(
-                    sum_rewards[:n_episodes],
-                    max_rewards[:n_episodes],
-                    all_successes[:n_episodes],
-                    all_seeds[:n_episodes],
+                    sum_rewards,
+                    max_rewards,
+                    all_successes,
                     strict=True,
                 )
             )
         ],
         "aggregated": {
-            "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
-            "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
-            "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
+            "avg_sum_reward": float(np.nanmean(sum_rewards)),
+            "avg_max_reward": float(np.nanmean(max_rewards)),
+            "pc_success": float(np.nanmean(all_successes) * 100),
             "eval_s": time.time() - start,
-            "eval_ep_s": (time.time() - start) / n_episodes,
+            "eval_ep_s": (time.time() - start) / 1,
         },
     }
 

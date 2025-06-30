@@ -72,14 +72,13 @@ def update_policy(
 
     policy.step()
     lr_scheduler.step() if lr_scheduler is not None else None
-
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
     # grad_norm_value = accelerator.gather(grad_norm).mean().item()
 
     train_metrics.loss = loss.item()
     # train_metrics.grad_norm = grad_norm.item()
-    # train_metrics.lr = optimizer.param_groups[0]["lr"]
+    train_metrics.lr = policy.get_lr()[0]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
@@ -151,8 +150,7 @@ def train(cfg: TrainPipelineConfig):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_envs = None
-    # if cfg.eval_freq > 0 and cfg.env is not None and accelerator.is_main_process: ## TODO:
-    if True:
+    if cfg.eval_freq > 0 and cfg.env is not None and accelerator.is_main_process: ## TODO:
         logging.info("Creating libero env")
         from libero.libero import benchmark
         from libero.libero.envs import OffScreenRenderEnv
@@ -160,23 +158,26 @@ def train(cfg: TrainPipelineConfig):
         benchmark_dict = benchmark.get_benchmark_dict()
         task_suite_name = "libero_10" # can also choose libero_spatial, libero_object, etc.
         task_suite = benchmark_dict[task_suite_name]()
-        task_id = 0
-        task = task_suite.get_task(task_id)
-        task_name = task.name
-        task_description = task.language
-        task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
-        print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
-            f"language instruction is {task_description}, and the bddl file is {task_bddl_file}")
-        
-        # step over the environment
-        env_args = {
-            "bddl_file_name": task_bddl_file,
-            "camera_heights": 128,
-            "camera_widths": 128
-        }
-        env = OffScreenRenderEnv(**env_args)
-        env.seed(0)
-        env.reset()
+        task_ids = [0]
+        eval_envs = []
+        for task_id in task_ids:
+            task = task_suite.get_task(task_id)
+            task_name = task.name
+            task_description = task.language
+            task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+            print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
+                f"language instruction is {task_description}, and the bddl file is {task_bddl_file}")
+            
+            # step over the environment
+            env_args = {
+                "bddl_file_name": task_bddl_file,
+                "camera_heights": 128,
+                "camera_widths": 128
+            }
+            env = OffScreenRenderEnv(**env_args)
+            env.seed(0)
+            env.reset()
+            eval_envs.append(env)
         eval_envs = [env]
 
     if accelerator.is_main_process:
@@ -209,7 +210,7 @@ def train(cfg: TrainPipelineConfig):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=0, ## TODO: set worker
+        num_workers=cfg.num_workers, ## TODO: set worker
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
@@ -222,9 +223,9 @@ def train(cfg: TrainPipelineConfig):
         # optimizer, 
         None,
         dataloader, 
+        # lr_scheduler,
         None,
     )
-
     # Log training info (only on main process)
     if accelerator.is_main_process:
         num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
@@ -306,8 +307,7 @@ def train(cfg: TrainPipelineConfig):
             save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
 
-        if True:
-        # if is_eval_step and accelerator.is_main_process: ## TODO:
+        if is_eval_step and accelerator.is_main_process: ## TODO:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
             # Unwrap model for evaluation
@@ -322,7 +322,7 @@ def train(cfg: TrainPipelineConfig):
                     cfg.eval.n_episodes,
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
-                    start_seed=cfg.seed,
+                    start_seed=0,
                 )
 
             eval_metrics = {
@@ -340,10 +340,15 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
             eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
             eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
+            eval_tracker_dict = eval_tracker.to_dict()
+            eval_tracker_dict["video_paths"] = [eval_info['per_episode'][i]['video_path'] for i in range(len(eval_info['per_episode']))]
+            eval_tracker_dict["observation_predicted_images"] = [eval_info['per_episode'][i]['observation_predicted_images'] for i in range(len(eval_info['per_episode']))]
             logging.info(eval_tracker)
-            wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+            wandb_log_dict = {**eval_tracker_dict, **eval_info}
             for k, v in wandb_log_dict.items():
                 accelerator.log({f"{'eval'}/{k}": v}, step=step)
+            if wandb_logger:
+                wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
             # Set back to training mode
             policy.train()
     # Wait for all processes to finish

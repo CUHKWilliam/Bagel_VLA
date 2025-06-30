@@ -222,12 +222,16 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
         default=True,
         metadata={"help": "Train image understanding branch."}
+    )
+    action_gen: bool = field(
+        default=True,
+        metadata={"help": "Train to generate action."}
     )
 
     # --- bookkeeping & logging ---
@@ -827,20 +831,19 @@ class PI0FlowMatching(nn.Module):
             else:
                 vit_model = SiglipVisionModel.from_pretrained(model_args.vit_path, config=vit_config)
 
-        if training_args.visual_gen:
-            vae_model, vae_config = load_ae(
-                local_path=os.path.join(model_args.model_path, "ae.safetensors") 
-                if training_args.finetune_from_hf else model_args.vae_path
-            )
-            self.vae_model = vae_model
-            self.vae_config = vae_config
+        vae_model, vae_config = load_ae(
+            local_path=os.path.join(model_args.model_path, "ae.safetensors") 
+            if training_args.finetune_from_hf else model_args.vae_path
+        )
+        self.vae_model = vae_model
+        self.vae_config = vae_config
 
         self.bagel_config = BagelConfig(
             visual_gen=training_args.visual_gen,
             visual_und=training_args.visual_und,
             llm_config=llm_config, 
             vit_config=vit_config if training_args.visual_und else None,
-            vae_config=vae_config if training_args.visual_gen else None,
+            vae_config=vae_config,
             latent_patch_size=model_args.latent_patch_size,
             max_latent_size=model_args.max_latent_size,
             vit_max_num_patch_per_side=model_args.vit_max_num_patch_per_side,
@@ -869,18 +872,22 @@ class PI0FlowMatching(nn.Module):
             bagel_model.language_model.config.vocab_size = len(tokenizer)
 
         # maybe freeze something:
-        if training_args.freeze_vae and training_args.visual_gen:
-            for param in vae_model.parameters():
-                param.requires_grad = False
-        if training_args.freeze_llm:
-            bagel_model.language_model.eval()
-            for param in bagel_model.language_model.parameters():
-                param.requires_grad = False
-        if training_args.freeze_vit and training_args.visual_und:
-            bagel_model.vit_model.eval()
-            for param in bagel_model.vit_model.parameters():
-                param.requires_grad = False
-        
+        if training_args.action_gen:
+            for name, param in bagel_model.named_parameters():
+                if "_moe_gen2" not in name:
+                    param.requires_grad = False
+
+        # if training_args.freeze_vae and training_args.visual_gen:
+        #     for param in vae_model.parameters():
+        #         param.requires_grad = False
+        # if training_args.freeze_llm:
+        #     bagel_model.language_model.eval()
+        #     for param in bagel_model.language_model.parameters():
+        #         param.requires_grad = False
+        # if training_args.freeze_vit and training_args.visual_und:
+        #     bagel_model.vit_model.eval()
+        #     for param in bagel_model.vit_model.parameters():
+        #         param.requires_grad = False
         self.bagel_model = bagel_model
         # Setup packed dataloader
         with open(data_args.dataset_config_file, "r") as stream:
@@ -889,13 +896,12 @@ class PI0FlowMatching(nn.Module):
         if training_args.visual_und:
             dataset_config.vit_patch_size = model_args.vit_patch_size
             dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
-        if training_args.visual_gen:
-            vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
-            dataset_config.vae_image_downsample = vae_image_downsample
-            dataset_config.max_latent_size = model_args.max_latent_size
-            dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
-            dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
-            dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
+        vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
+        dataset_config.vae_image_downsample = vae_image_downsample
+        dataset_config.max_latent_size = model_args.max_latent_size
+        dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
+        dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
+        dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
         self.dataset = PackedDataset(
             dataset_config,
             tokenizer=tokenizer,
@@ -1086,6 +1092,7 @@ class PI0FlowMatching(nn.Module):
                 observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
         observation_image = cv2.hconcat(observation_images)
         
+        
         # add images
         image = Image.fromarray(observation_image)
         generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
@@ -1153,7 +1160,7 @@ class PI0FlowMatching(nn.Module):
             for k, v in generation_input_cfg.items():
                 if torch.is_tensor(v):
                     generation_input_cfg[k] = v.to(device)
-            num_timesteps = 50 ## TODO: set timesteps here
+            num_timesteps = 5 ## TODO: set timesteps here
             cfg_scale = 4
             cfg_interval = [0., 1.]
             timestep_shift = 3.0
@@ -1184,7 +1191,6 @@ class PI0FlowMatching(nn.Module):
             predict_images = image_list
         else:
             predict_images = None
-        import ipdb;ipdb.set_trace()
         generation_input = self.bagel_model.prepare_action(newlens, new_rope, new_token_ids)
         for k, v in generation_input.items():
             if torch.is_tensor(v):
@@ -1193,11 +1199,9 @@ class PI0FlowMatching(nn.Module):
             past_key_values=past_key_values,
             **generation_input,
         )
-        import ipdb;ipdb.set_tracde()
-        action_pred = self.act_out_proj(unpacked_latent["action_loss_indexes"])
-        output = tokenizer.decode(unpacked_latent[:,0])
-        output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
-
+        action_pred = self.act_out_proj(unpacked_latent[1:-1])
+        action_pred_indices = torch.argmax(action_pred, dim=1).view(1, self.bagel_model.config.action_horizon, self.bagel_model.config.action_dim)
+        action_pred = self.action_tokenizer.decode_token_ids_to_actions(action_pred_indices.detach().cpu().numpy())[0]
         return action_pred, predict_images
 
     def denoise_step(

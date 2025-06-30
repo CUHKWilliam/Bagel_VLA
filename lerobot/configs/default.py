@@ -41,21 +41,21 @@ class DatasetConfig:
 
 @dataclass
 class WandBConfig:
-    enable: bool = False
+    enable: bool = True
     # Set to true to disable saving an artifact despite training.save_checkpoint=True
     disable_artifact: bool = False
-    project: str = "lerobot"
+    project: str = "bagel_vae"
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None ## TODO: set wandb id later
-    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    mode: str | None = "online"  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
 
 
 @dataclass
 class EvalConfig:
-    n_episodes: int = 50
+    n_episodes: int = 2
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
-    batch_size: int = 50
+    batch_size: int = 1
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     use_async_envs: bool = False
 

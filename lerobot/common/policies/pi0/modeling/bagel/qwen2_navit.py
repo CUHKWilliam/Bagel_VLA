@@ -1027,6 +1027,7 @@ class Qwen2MoTDecoderLayer(nn.Module):
         mode="und",
         packed_vae_token_indexes=None,
         packed_text_indexes=None,
+        packed_action_token_indexes=None,
     ) -> BaseNavitOutputWithPast:
 
         residual = packed_query_sequence
@@ -1069,13 +1070,8 @@ class Qwen2MoTDecoderLayer(nn.Module):
             packed_query_sequence_[packed_vae_token_indexes] = self.mlp_moe_gen(packed_vae_query_sequence)
             packed_query_sequence = packed_query_sequence_
         elif mode == "action":
-            packed_text_query_sequence = packed_query_sequence[packed_text_indexes]
-            packed_vae_query_sequence = packed_query_sequence[packed_vae_token_indexes]
-            packed_text_query_sequence = self.post_attention_layernorm(packed_text_query_sequence)
-            packed_vae_query_sequence = self.post_attention_layernorm_moe_gen(packed_vae_query_sequence)
-            packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
-            packed_query_sequence_[packed_text_indexes] = self.mlp(packed_text_query_sequence)
-            packed_query_sequence_[packed_vae_token_indexes]
+            packed_query_sequence = self.post_attention_layernorm(packed_query_sequence)
+            packed_query_sequence = self.mlp(packed_query_sequence)
 
         packed_query_sequence = residual + packed_query_sequence
         return packed_query_sequence, past_key_values
@@ -1339,7 +1335,6 @@ class Qwen2MoEDecoderLayer(nn.Module):
         elif mode == "action":
             packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
             packed_query_sequence_[packed_text_indexes] = self.mlp(packed_query_sequence[packed_text_indexes])
-            packed_query_sequence_[packed_vae_token_indexes] = self.mlp_moe_gen(packed_query_sequence[packed_vae_token_indexes])
             packed_query_sequence_[packed_action_token_indexes] = self.mlp_moe_gen2(packed_query_sequence[packed_action_token_indexes])
             packed_query_sequence = packed_query_sequence_
         packed_query_sequence = residual + packed_query_sequence
@@ -1363,7 +1358,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         # layer_module = Decoder_layer_dict[config.layer_module]
-        NUM_ACTION_LAYERS = 0
+        NUM_ACTION_LAYERS = 5
         self.layers = nn.ModuleList(
             [Qwen2MoTDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers - NUM_ACTION_LAYERS)] \
                 + [Qwen2MoTDecoderLayer2(config, layer_idx) for layer_idx in range(NUM_ACTION_LAYERS)] 
@@ -1375,6 +1370,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
         self.norm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         if self.use_moe:
             self.norm_moe_gen = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            self.norm_moe_gen2 = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen2RotaryEmbedding(config=config)
 
         # Initialize weights and apply final processing
@@ -1430,6 +1426,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
             if self.config.freeze_und:
                 packed_sequence_[packed_und_token_indexes] = packed_sequence_[packed_und_token_indexes].detach()
             packed_sequence_[packed_gen_token_indexes] = self.norm_moe_gen(packed_sequence[packed_gen_token_indexes])
+            packed_sequence_[packed_action_token_indexes] = self.norm_moe_gen2(packed_sequence[packed_action_token_indexes])
             return packed_sequence_
         else:
             return self.norm(packed_sequence)
@@ -1468,7 +1465,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
                     packed_text_indexes=packed_text_indexes,
                 )
             elif mode == "action":
-                assert packed_vae_token_indexes is not None
                 assert packed_text_indexes is not None
                 assert packed_action_token_indexes is not None
                 extra_inputs.update(
@@ -1502,7 +1498,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
             elif mode == "action":
                 packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
                 packed_query_sequence_[packed_text_indexes] = self.norm(packed_query_sequence[packed_text_indexes])
-                packed_query_sequence_[packed_vae_token_indexes] = self.norm_moe_gen(packed_query_sequence[packed_vae_token_indexes])
                 packed_query_sequence_[packed_action_token_indexes] = self.norm_moe_gen2(packed_query_sequence[packed_action_token_indexes])
                 packed_query_sequence = packed_query_sequence_
         else:

@@ -691,10 +691,10 @@ class PackedDataset:
 
             elif item['type'] == 'vae_image':
                 image_tensor = image_tensor_list.pop(0)
-                if item['enable_cfg'] == 1 and random.random() < self.data_config.vae_cond_dropout_prob:
-                    # FIXME fix vae dropout in video2video setting.
-                    curr_rope_id += 1
-                    continue
+                # if item['enable_cfg'] == 1 and random.random() < self.data_config.vae_cond_dropout_prob:
+                #     # FIXME fix vae dropout in video2video setting.
+                #     curr_rope_id += 1
+                #     continue
 
                 # add a <|startofimage|> token
                 sequence_status['packed_text_ids'].append(self.start_of_image)

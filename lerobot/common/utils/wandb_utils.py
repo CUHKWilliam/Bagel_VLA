@@ -25,6 +25,7 @@ from termcolor import colored
 from lerobot.common.constants import PRETRAINED_MODEL_DIR
 from lerobot.configs.train import TrainPipelineConfig
 
+import numpy as np
 
 def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
@@ -111,14 +112,15 @@ class WandBLogger:
     def log_dict(self, d: dict, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
-
         for k, v in d.items():
-            if not isinstance(v, (int, float, str)):
-                logging.warning(
-                    f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
-                )
-                continue
-            self._wandb.log({f"{mode}/{k}": v}, step=step)
+            if isinstance(v, (int, float)):
+                self._wandb.log({f"{mode}/{k}": v}, step=step)
+            elif isinstance(v, list):
+                if isinstance(v[0], str):
+                    self._wandb.log({f"{mode}/{k}": [self._wandb.Video(a_v, fps=self.env_fps, format="mp4") for a_v in v]}, step=step)
+                elif isinstance(v[0], np.ndarray):
+                    self._wandb.log({f"{mode}/{k}": [self._wandb.Image(a_v) for a_v in v if a_v is not None]}, step=step)
+
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:

@@ -177,26 +177,20 @@ class Bagel(PreTrainedModel):
         super().__init__(config)    
         self.language_model = language_model
 
-        for n, p in self.language_model.model.layers.named_parameters():
-            if "27" not in n: ## TODO:
-                p.requires_grad = False
-
         self.hidden_size = config.llm_config.hidden_size
         self.use_moe = "Mo" in config.llm_config.layer_module
         self.num_heads = config.llm_config.num_attention_heads
 
-        if config.visual_gen:
-            self.time_embedder = TimestepEmbedder(self.hidden_size)
-            self.timestep_shift = config.timestep_shift
-            self.latent_patch_size = config.latent_patch_size
-            self.latent_downsample = config.vae_config.downsample * config.latent_patch_size
-            self.max_latent_size = config.max_latent_size
-            self.latent_channel = config.vae_config.z_channels
-            self.patch_latent_dim = self.latent_patch_size ** 2 * self.latent_channel
-            self.vae2llm = nn.Linear(self.patch_latent_dim, self.hidden_size)
-            self.llm2vae = nn.Linear(self.hidden_size, self.patch_latent_dim)
-            self.latent_pos_embed = PositionEmbedding(self.max_latent_size, self.hidden_size)
-
+        self.time_embedder = TimestepEmbedder(self.hidden_size)
+        self.timestep_shift = config.timestep_shift
+        self.latent_patch_size = config.latent_patch_size
+        self.latent_downsample = config.vae_config.downsample * config.latent_patch_size
+        self.max_latent_size = config.max_latent_size
+        self.latent_channel = config.vae_config.z_channels
+        self.patch_latent_dim = self.latent_patch_size ** 2 * self.latent_channel
+        self.vae2llm = nn.Linear(self.patch_latent_dim, self.hidden_size)
+        self.llm2vae = nn.Linear(self.hidden_size, self.patch_latent_dim)
+        self.latent_pos_embed = PositionEmbedding(self.max_latent_size, self.hidden_size)
 
         if config.visual_und:
             self.vit_model = vit_model
@@ -718,7 +712,7 @@ class Bagel(PreTrainedModel):
             packed_text_ids.append(new_token_ids['end_of_image'])
             packed_text_indexes.append(query_curr)
             packed_indexes.append(curr)
-            newlens.append(curr_kvlen + num_image_tokens)
+            newlens.append(curr_kvlen + num_image_tokens + 2)
             new_rope.append(curr_position_id + 1)
 
             curr += 1
@@ -826,7 +820,7 @@ class Bagel(PreTrainedModel):
             else:
                 cfg_text_scale_ = 1.0
                 cfg_img_scale_ = 1.0
-            if t == len(timesteps) - 1: ## indicating the last 
+            if i == len(timesteps) - 1: ## indicating the last 
                 update_past_key_values = True
             else:
                 update_past_key_values = False
@@ -1154,12 +1148,10 @@ class Bagel(PreTrainedModel):
         self,
         packed_text_ids: torch.LongTensor,
         packed_text_indexes: torch.LongTensor,
-        packed_vae_token_indexes: torch.LongTensor,
         packed_seqlens: torch.IntTensor,
         past_key_values: NaiveCache,
         key_values_lens: torch.IntTensor,
         packed_key_value_indexes: torch.LongTensor,
-        query_lens: torch.LongTensor,
         packed_action_token_indexes: torch.LongTensor,
         packed_query_position_ids: torch.LongTensor,
         packed_query_indexes: torch.LongTensor,
@@ -1173,13 +1165,12 @@ class Bagel(PreTrainedModel):
             extra_inputs = {
                 "mode": "action",
                 "packed_action_token_indexes": packed_action_token_indexes,
-                "packed_vae_token_indexes": packed_vae_token_indexes,
                 "packed_text_indexes": packed_text_indexes,
             }  
 
         output = self.language_model.forward_inference(
             packed_query_sequence=packed_sequence,
-            query_lens=query_lens,
+            query_lens=packed_seqlens,
             packed_query_position_ids=packed_query_position_ids,
             packed_query_indexes=packed_query_indexes,
             past_key_values=past_key_values,
@@ -1189,7 +1180,7 @@ class Bagel(PreTrainedModel):
             is_causal=False,
             **extra_inputs,
         )
-        return torch.stack([i.to(output_device) for i in generated_sequence], dim=0)
+        return output.packed_query_sequence
 
     # for evaluation
     @torch.no_grad()
