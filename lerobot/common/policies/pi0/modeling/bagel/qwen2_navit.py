@@ -330,7 +330,6 @@ class PackedAttention(Qwen2Attention):
         packed_query_states, packed_key_states = apply_rotary_pos_emb(
             packed_query_states, packed_key_states, packed_cos, packed_sin, unsqueeze_dim=1
         )
-
         if past_key_values is not None and past_key_values.key_cache[self.layer_idx] is not None:
             past_key_states = past_key_values.key_cache[self.layer_idx]
             past_value_states = past_key_values.value_cache[self.layer_idx]
@@ -338,7 +337,10 @@ class PackedAttention(Qwen2Attention):
             seqlens = sum(query_lens) + sum(key_values_lens)
             merged_key_states = past_key_states.new_zeros((seqlens, self.num_key_value_heads, self.head_dim))
             merged_value_states = past_key_states.new_zeros((seqlens, self.num_key_value_heads, self.head_dim))
-            merged_key_states[packed_query_indexes] = packed_key_states
+            try:
+                merged_key_states[packed_query_indexes] = packed_key_states
+            except:
+                import ipdb;ipdb.set_trace()
             merged_key_states[packed_key_value_indexes] = past_key_states
             merged_value_states[packed_query_indexes] = packed_value_states
             merged_value_states[packed_key_value_indexes] = past_value_states
@@ -737,6 +739,7 @@ class PackedAttentionMoT2(Qwen2Attention):
         mode="und",
         packed_vae_token_indexes=None,
         packed_text_indexes=None,
+        packed_action_token_indexes=None,
     ):
         if mode == 'und':
             packed_query_states = self.q_proj(packed_query_sequence).view(-1, self.num_heads, self.head_dim)
@@ -779,7 +782,6 @@ class PackedAttentionMoT2(Qwen2Attention):
             packed_value_states = packed_query_sequence.new_zeros((packed_query_sequence.shape[0], self.num_key_value_heads * self.head_dim))
 
             packed_text_query_sequence = packed_query_sequence[packed_text_indexes]
-            packed_vae_query_sequence = packed_query_sequence[packed_vae_token_indexes]
             packed_action_query_sequence = packed_query_sequence[packed_action_token_indexes]
 
             packed_query_states[packed_text_indexes] = self.q_proj(packed_text_query_sequence)
@@ -808,7 +810,6 @@ class PackedAttentionMoT2(Qwen2Attention):
         packed_query_states, packed_key_states = apply_rotary_pos_emb(
             packed_query_states, packed_key_states, packed_cos, packed_sin, unsqueeze_dim=1
         )
-
         if past_key_values is not None and past_key_values.key_cache[self.layer_idx] is not None:
             assert query_lens is not None
             assert key_values_lens is not None
@@ -1358,10 +1359,10 @@ class Qwen2Model(Qwen2PreTrainedModel):
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         # layer_module = Decoder_layer_dict[config.layer_module]
-        NUM_ACTION_LAYERS = 5
+        NUM_ACTION_LAYERS = 10
         self.layers = nn.ModuleList(
             [Qwen2MoTDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers - NUM_ACTION_LAYERS)] \
-                + [Qwen2MoTDecoderLayer2(config, layer_idx) for layer_idx in range(NUM_ACTION_LAYERS)] 
+                + [Qwen2MoTDecoderLayer2(config, config.num_hidden_layers - NUM_ACTION_LAYERS + layer_idx) for layer_idx in range(NUM_ACTION_LAYERS)] 
         )
         # self.layers = nn.ModuleList(
         #     [layer_module(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]

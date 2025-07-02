@@ -644,7 +644,6 @@ class PI0Policy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
-
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
@@ -874,7 +873,7 @@ class PI0FlowMatching(nn.Module):
         # maybe freeze something:
         if training_args.action_gen:
             for name, param in bagel_model.named_parameters():
-                if "_moe_gen2" not in name:
+                if "_moe_gen2" not in name or "action" not in name:
                     param.requires_grad = False
 
         # if training_args.freeze_vae and training_args.visual_gen:
@@ -1028,7 +1027,11 @@ class PI0FlowMatching(nn.Module):
             # Original openpi code, upcast attention output
             action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])
             action_mse = F.cross_entropy(action_pred, data_batch["packed_action_tokens"] - self.action_tokenizer.action_token_begin_idx - 1, reduction="none")
+            action_pred_indices = torch.argmax(action_pred, dim=1).view(1, self.bagel_model.config.action_horizon, self.bagel_model.config.action_dim)
+            action_pred = self.action_tokenizer.decode_token_ids_to_actions(action_pred_indices.detach().cpu().numpy())
         loss_dict = {}
+        if self.bagel_model.config.action_gen:
+            loss_dict['predict_action'] = action_pred
         loss = 0
         if ce is not None:
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
@@ -1091,7 +1094,6 @@ class PI0FlowMatching(nn.Module):
             if "images." in key and "observation" in key:
                 observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
         observation_image = cv2.hconcat(observation_images)
-        
         
         # add images
         image = Image.fromarray(observation_image)

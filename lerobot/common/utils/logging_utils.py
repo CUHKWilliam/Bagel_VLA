@@ -16,7 +16,7 @@
 from typing import Any
 
 from lerobot.common.utils.utils import format_big_number
-
+from accelerate.utils import gather_object
 
 class AverageMeter:
     """
@@ -24,22 +24,23 @@ class AverageMeter:
     Adapted from https://github.com/pytorch/examples/blob/main/imagenet/main.py
     """
 
-    def __init__(self, name: str, fmt: str = ":f"):
+    def __init__(self, name: str, fmt: str = ":f", accelerator = None):
         self.name = name
         self.fmt = fmt
+        self.accelerator = accelerator
         self.reset()
 
     def reset(self) -> None:
         self.val = 0.0
         self.avg = 0.0
-        self.sum = 0.0
-        self.count = 0.0
+        self.sum = [0.0]
+        self.count = [0.0]
 
     def update(self, val: float, n: int = 1) -> None:
         self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
+        self.sum[0] += val * n
+        self.count[0] += n
+        self.avg = gather_object(self.sum)[0] / gather_object(self.count)[0]
 
     def __str__(self):
         fmtstr = "{name}:{avg" + self.fmt + "}"

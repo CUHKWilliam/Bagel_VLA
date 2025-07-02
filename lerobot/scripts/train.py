@@ -54,6 +54,8 @@ from lerobot.scripts.eval import eval_policy
 from accelerate import Accelerator
 from accelerate.utils import set_seed as accelerate_set_seed
 import os
+import numpy as np
+import cv2
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -85,7 +87,6 @@ def update_policy(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
-    cfg.batch_size = 1
 
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
@@ -111,6 +112,8 @@ def train(cfg: TrainPipelineConfig):
         kwargs_handlers=[ddp_kwargs],
         project_dir=cfg.output_dir,
     )
+
+    cfg.batch_size = 1
 
     accelerator.init_trackers(
         project_name=cfg.wandb.project,
@@ -150,19 +153,22 @@ def train(cfg: TrainPipelineConfig):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_envs = None
-    if cfg.eval_freq > 0 and cfg.env is not None and accelerator.is_main_process: ## TODO:
+    if cfg.eval_freq > 0: ## TODO:
         logging.info("Creating libero env")
         from libero.libero import benchmark
         from libero.libero.envs import OffScreenRenderEnv
         from libero.libero import get_libero_path
         benchmark_dict = benchmark.get_benchmark_dict()
-        task_suite_name = "libero_10" # can also choose libero_spatial, libero_object, etc.
+        task_suite_name = "libero_90" # can also choose libero_spatial, libero_object, etc.
         task_suite = benchmark_dict[task_suite_name]()
-        task_ids = [0]
+        task_ids = list(range(200,))
         eval_envs = []
         for task_id in task_ids:
             task = task_suite.get_task(task_id)
             task_name = task.name
+            ## TODO: just for debug now
+            if task_name != "KITCHEN_SCENE5_put_the_black_bowl_on_the_plate":
+                continue
             task_description = task.language
             task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
             print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
@@ -178,8 +184,10 @@ def train(cfg: TrainPipelineConfig):
             env.seed(0)
             env.reset()
             eval_envs.append(env)
+            ## TODO: just for debug now            
+            if task_name != "KITCHEN_SCENE5_put_the_black_bowl_on_the_plate_demo.hdf5":
+                break
         eval_envs = [env]
-
     if accelerator.is_main_process:
         logging.info("Creating policy")
     cfg.policy.device = "cpu"
@@ -226,6 +234,7 @@ def train(cfg: TrainPipelineConfig):
         # lr_scheduler,
         None,
     )
+
     # Log training info (only on main process)
     if accelerator.is_main_process:
         num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
@@ -244,11 +253,11 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"Mixed precision: {accelerator.mixed_precision}")
 
     train_metrics = {
-        "loss": AverageMeter("loss", ":.3f"),
-        "grad_norm": AverageMeter("grdn", ":.3f"),
-        "lr": AverageMeter("lr", ":0.1e"),
-        "update_s": AverageMeter("updt_s", ":.3f"),
-        "dataloading_s": AverageMeter("data_s", ":.3f"),
+        "loss": AverageMeter("loss", ":.3f", accelerator),
+        "grad_norm": AverageMeter("grdn", ":.3f", accelerator),
+        "lr": AverageMeter("lr", ":0.1e", accelerator),
+        "update_s": AverageMeter("updt_s", ":.3f", accelerator),
+        "dataloading_s": AverageMeter("data_s", ":.3f", accelerator),
     }
 
     train_tracker = MetricsTracker(
@@ -287,48 +296,58 @@ def train(cfg: TrainPipelineConfig):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
+        # if True:
         if is_log_step and accelerator.is_main_process:
             logging.info(train_tracker)
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
-                if output_dict:
-                    wandb_log_dict.update(output_dict)
+                observation_images = []
+                for key in batch.keys():
+                    if "images." in key and "observation" in key:
+                        observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+                observation_image = cv2.hconcat(observation_images)
+                wandb_log_dict.update({"observation": [observation_image]})
+                gt_action = str(batch['action'][0][:10].tolist())
+                predict_action = str(output_dict['predict_action'][0].tolist())
+                wandb_log_dict.update({"action": [{"gt_action": gt_action, "predicted_action": predict_action}]})
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step and accelerator.is_main_process:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-             # Wait for all processes before saving
+            # Wait for all processes before saving
             accelerator.wait_for_everyone()
 
             # Unwrap model for saving
             unwrapped_policy = accelerator.unwrap_model(policy)
             save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
-
-        if is_eval_step and accelerator.is_main_process: ## TODO:
+        
+        if is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
             # Unwrap model for evaluation
             unwrapped_policy = accelerator.unwrap_model(policy)
             unwrapped_policy.eval()
+            process_index = accelerator.process_index
+            num_processes = accelerator.num_processes
+            local_eval_envs = eval_envs[accelerator.process_index::accelerator.num_processes] if accelerator.process_index in list(range(len(eval_envs))) else eval_envs
             with (
                 torch.no_grad(),
             ):
                 eval_info = eval_policy(
-                    eval_envs,
+                    local_eval_envs,
                     unwrapped_policy,
                     cfg.eval.n_episodes,
                     videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                     max_episodes_rendered=4,
                     start_seed=0,
                 )
-
             eval_metrics = {
-                "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
-                "pc_success": AverageMeter("success", ":.1f"),
-                "eval_s": AverageMeter("eval_s", ":.3f"),
+                "avg_sum_reward": AverageMeter("∑rwrd", ":.3f", accelerator),
+                "pc_success": AverageMeter("success", ":.1f", accelerator),
+                "eval_s": AverageMeter("eval_s", ":.3f", accelerator),
             }
             eval_tracker = MetricsTracker(
                 cfg.batch_size * accelerator.num_processes, 
@@ -340,15 +359,17 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
             eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
             eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
-            eval_tracker_dict = eval_tracker.to_dict()
-            eval_tracker_dict["video_paths"] = [eval_info['per_episode'][i]['video_path'] for i in range(len(eval_info['per_episode']))]
-            eval_tracker_dict["observation_predicted_images"] = [eval_info['per_episode'][i]['observation_predicted_images'] for i in range(len(eval_info['per_episode']))]
-            logging.info(eval_tracker)
-            wandb_log_dict = {**eval_tracker_dict, **eval_info}
-            for k, v in wandb_log_dict.items():
-                accelerator.log({f"{'eval'}/{k}": v}, step=step)
-            if wandb_logger:
-                wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
+            if accelerator.is_main_process:
+                eval_tracker_dict = eval_tracker.to_dict()
+                eval_tracker_dict["video_paths"] = [eval_info['per_episode'][i]['video_path'] for i in range(len(eval_info['per_episode']))]
+                eval_tracker_dict["observation_predicted_images"] = [eval_info['per_episode'][i]['observation_predicted_images'] for i in range(len(eval_info['per_episode']))]
+                eval_info.pop("per_episode")
+                logging.info(eval_tracker)
+                wandb_log_dict = {**eval_tracker_dict, **eval_info}
+                for k, v in wandb_log_dict.items():
+                    accelerator.log({f"{'eval'}/{k}": v}, step=step)
+                if wandb_logger:
+                    wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
             # Set back to training mode
             policy.train()
     # Wait for all processes to finish

@@ -521,7 +521,6 @@ class Bagel(PreTrainedModel):
         extra_inputs = {}
         if self.use_moe:
             extra_inputs = {"mode": "und"}
-
         output = self.language_model.forward_inference(
             packed_query_sequence=packed_sequence,
             query_lens=packed_seqlens,

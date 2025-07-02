@@ -120,6 +120,15 @@ class WandBLogger:
                     self._wandb.log({f"{mode}/{k}": [self._wandb.Video(a_v, fps=self.env_fps, format="mp4") for a_v in v]}, step=step)
                 elif isinstance(v[0], np.ndarray):
                     self._wandb.log({f"{mode}/{k}": [self._wandb.Image(a_v) for a_v in v if a_v is not None]}, step=step)
+                elif isinstance(v[0], dict):
+                    table_data = []
+                    columns = list(v[0].keys())
+                    for row in range(len(v)):
+                        row_data = []
+                        for k2 in v[row].keys():
+                            row_data.append(v[row][k2])
+                        table_data.append(row_data)
+                    self._wandb.log({f"{mode}/{k}": self._wandb.Table(data=table_data, columns=columns)})
 
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
