@@ -43,10 +43,12 @@ def get_wandb_run_id_from_filesystem(log_dir: Path) -> str:
     # Get the WandB run ID.
     paths = glob(str(log_dir / "wandb/latest-run/run-*"))
     if len(paths) != 1:
-        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+        print("Couldn't get the previous WandB run ID for run resumption.")
+        return None
     match = re.search(r"run-([^\.]+).wandb", paths[0].split("/")[-1])
     if match is None:
-        raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
+        print(RuntimeError("Couldn't get the previous WandB run ID for run resumption."))
+        return None
     wandb_run_id = match.groups(0)[0]
     return wandb_run_id
 
@@ -77,6 +79,11 @@ class WandBLogger:
             if cfg.resume
             else None
         )
+        print("wandb_run_id:", wandb_run_id)
+        if wandb_run_id is None:
+            resume = None
+        else:
+            resume = "must"
         wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,
@@ -90,7 +97,7 @@ class WandBLogger:
             save_code=False,
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
-            resume="must" if cfg.resume else None,
+            resume=resume,
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
@@ -128,7 +135,7 @@ class WandBLogger:
                         for k2 in v[row].keys():
                             row_data.append(v[row][k2])
                         table_data.append(row_data)
-                    self._wandb.log({f"{mode}/{k}": self._wandb.Table(data=table_data, columns=columns)})
+                    self._wandb.log({f"{mode}/{k}": self._wandb.Table(data=table_data, columns=columns)}, step=step)
 
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):

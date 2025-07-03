@@ -915,13 +915,14 @@ class PI0FlowMatching(nn.Module):
             data_status=None,
             action_dim=self.bagel_model.config.action_dim,
             action_horizon = self.bagel_model.config.action_horizon,
+            visual_gen=training_args.visual_gen,
         )
         self.action_tokenizer = ActionTokenizer(
             tokenizer=tokenizer,
         )
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.act_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, self.action_tokenizer.n_bins)
+        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, 1)
         self.set_requires_grad()
 
 
@@ -953,9 +954,10 @@ class PI0FlowMatching(nn.Module):
             data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
             with torch.no_grad():
                 data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+
         if "packed_action_tokens" in data_batch.keys():
             with torch.no_grad():
-                data_batch['packed_action_tokens'] = torch.tensor(self.action_tokenizer(data_batch['packed_action_tokens'].float().detach().cpu().numpy())).to(f"cuda:{torch.cuda.current_device()}")
+                data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
         return data_batch
 
     def embed_suffix(self, noisy_actions, timestep):
@@ -1026,12 +1028,12 @@ class PI0FlowMatching(nn.Module):
         if self.bagel_model.config.action_gen:
             # Original openpi code, upcast attention output
             action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])
-            action_mse = F.cross_entropy(action_pred, data_batch["packed_action_tokens"] - self.action_tokenizer.action_token_begin_idx - 1, reduction="none")
-            action_pred_indices = torch.argmax(action_pred, dim=1).view(1, self.bagel_model.config.action_horizon, self.bagel_model.config.action_dim)
-            action_pred = self.action_tokenizer.decode_token_ids_to_actions(action_pred_indices.detach().cpu().numpy())
+            action_pred = action_pred[:, 0]
+            action_mse = F.l1_loss(action_pred, data_batch['packed_action_tokens'], reduction="none")
         loss_dict = {}
         if self.bagel_model.config.action_gen:
             loss_dict['predict_action'] = action_pred
+            loss_dict['gt_action'] = data_batch["packed_action_tokens"]
         loss = 0
         if ce is not None:
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
@@ -1201,9 +1203,8 @@ class PI0FlowMatching(nn.Module):
             past_key_values=past_key_values,
             **generation_input,
         )
-        action_pred = self.act_out_proj(unpacked_latent[1:-1])
-        action_pred_indices = torch.argmax(action_pred, dim=1).view(1, self.bagel_model.config.action_horizon, self.bagel_model.config.action_dim)
-        action_pred = self.action_tokenizer.decode_token_ids_to_actions(action_pred_indices.detach().cpu().numpy())[0]
+        action_pred = self.act_out_proj(unpacked_latent[1:-1])[:, 0]
+        action_pred = action_pred.view(self.bagel_model.action_horizon, -1)
         return action_pred, predict_images
 
     def denoise_step(

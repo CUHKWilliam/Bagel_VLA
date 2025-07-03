@@ -285,6 +285,7 @@ class Bagel(PreTrainedModel):
             attention_mask = block_mask
         else:
             attention_mask = nested_attention_masks
+      
         if self.config.visual_und:
             cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
             cu_seqlens = cu_seqlens.to(torch.int32)
@@ -320,8 +321,8 @@ class Bagel(PreTrainedModel):
 
         if self.config.action_gen:
             n_action_steps = self.config.n_action_steps
-            packed_action_embedding = self.language_model.model.embed_tokens(packed_action_tokens)
-            packed_sequence[packed_action_token_indexes] = packed_action_embedding
+            action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids[1:-1] - packed_action_position_ids[1])
+            packed_sequence[packed_action_token_indexes] = action_token_pos_emb
 
         extra_inputs = {}
         if self.use_moe:
@@ -1158,6 +1159,9 @@ class Bagel(PreTrainedModel):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
+        n_action_steps = self.config.n_action_steps
+        action_token_pos_emb = self.latent_pos_embed(packed_query_position_ids[1:-1] - packed_query_position_ids[1])
+        packed_sequence[packed_action_token_indexes] = action_token_pos_emb
         
         extra_inputs = {}
         if self.use_moe:

@@ -62,7 +62,6 @@ def update_policy(
     policy: PreTrainedPolicy,
     batch: Any,
     optimizer: Optimizer,
-    grad_clip_norm: float,
     accelerator: Accelerator,
     lr_scheduler=None,
 ) -> tuple[MetricsTracker, dict]:
@@ -90,11 +89,6 @@ def train(cfg: TrainPipelineConfig):
 
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
-    if cfg.wandb.enable and cfg.wandb.project:
-        wandb_logger = WandBLogger(cfg)
-    else:
-        wandb_logger = None
-        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     if cfg.seed is not None:
         set_seed(cfg.seed)
@@ -112,6 +106,12 @@ def train(cfg: TrainPipelineConfig):
         kwargs_handlers=[ddp_kwargs],
         project_dir=cfg.output_dir,
     )
+    if accelerator.is_main_process:
+        if cfg.wandb.enable and cfg.wandb.project:
+            wandb_logger = WandBLogger(cfg)
+        else:
+            wandb_logger = None
+            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     cfg.batch_size = 1
 
@@ -198,11 +198,9 @@ def train(cfg: TrainPipelineConfig):
     torch.cuda.empty_cache()
     if accelerator.is_main_process:
         logging.info("Creating optimizer and scheduler")
-    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+    # optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     step = 0  # number of policy updates (forward + backward + optim)
-    if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
 
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
@@ -228,12 +226,14 @@ def train(cfg: TrainPipelineConfig):
     # Prepare for distributed training
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, 
-        # optimizer, 
         None,
         dataloader, 
-        # lr_scheduler,
         None,
     )
+
+    if cfg.resume:
+        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+        step, optimizer, lr_scheduler = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
 
     # Log training info (only on main process)
     if accelerator.is_main_process:
@@ -284,7 +284,6 @@ def train(cfg: TrainPipelineConfig):
             policy,
             batch,
             optimizer,
-            cfg.optimizer.grad_clip_norm,
             accelerator,
             lr_scheduler=lr_scheduler,
         )
@@ -296,8 +295,8 @@ def train(cfg: TrainPipelineConfig):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
-        # if True:
         if is_log_step and accelerator.is_main_process:
+            print("logging.....")
             logging.info(train_tracker)
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
@@ -307,23 +306,26 @@ def train(cfg: TrainPipelineConfig):
                         observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
                 observation_image = cv2.hconcat(observation_images)
                 wandb_log_dict.update({"observation": [observation_image]})
-                gt_action = str(batch['action'][0][:10].tolist())
-                predict_action = str(output_dict['predict_action'][0].tolist())
+                predict_action = str(output_dict['predict_action'].view(-1).tolist())
+                gt_action = str(output_dict['gt_action'].tolist())
                 wandb_log_dict.update({"action": [{"gt_action": gt_action, "predicted_action": predict_action}]})
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
+        
+        if cfg.save_checkpoint and is_saving_step:
+            accelerator.wait_for_everyone()
 
         if cfg.save_checkpoint and is_saving_step and accelerator.is_main_process:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            # Wait for all processes before saving
-            accelerator.wait_for_everyone()
-
             # Unwrap model for saving
             unwrapped_policy = accelerator.unwrap_model(policy)
-            save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
+            save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, policy)
             update_last_checkpoint(checkpoint_dir)
         
+        if cfg.save_checkpoint and is_saving_step:
+            accelerator.wait_for_everyone()
+
         if is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
@@ -357,6 +359,7 @@ def train(cfg: TrainPipelineConfig):
                 initial_step=step
             )
             eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
+
             eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
             eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
             if accelerator.is_main_process:
@@ -371,11 +374,12 @@ def train(cfg: TrainPipelineConfig):
                 if wandb_logger:
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
             # Set back to training mode
+            print("eval log dict done")
             policy.train()
     # Wait for all processes to finish
     accelerator.wait_for_everyone()
 
-    if eval_envs and accelerator.is_main_process:
+    if eval_envs:
         for eval_env in eval_envs:
             eval_env.close()
     if accelerator.is_main_process:

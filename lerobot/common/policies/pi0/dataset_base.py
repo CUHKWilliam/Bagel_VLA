@@ -322,9 +322,10 @@ class InterleavedBaseIterableDataset:
 
 
 class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
-    def __init__(self, transform, vit_transform, tokenizer, action_horizon=5, action_dim=7):
+    def __init__(self, transform, vit_transform, tokenizer, action_horizon=5, action_dim=7, visual_gen=True,):
         super().__init__(transform, vit_transform, tokenizer)
         self.action_horizon, self.action_dim = action_horizon, action_dim
+        self.visual_gen = visual_gen
 
     def __call__(self, sample):
         batch_size = len(sample['task'])
@@ -354,13 +355,14 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     next_images.append(np.zeros_like(observation_images[i]).astype(np.uint8))
             next_img_num = len(next_images)
             next_images = cv2.hconcat(next_images)
-            data = self._add_image(
-                data, 
-                pil_img2rgb(Image.fromarray(next_images)),
-                need_loss=True, 
-                need_vae=True, 
-                need_vit=False, 
-            )
+            if self.visual_gen:
+                data = self._add_image(
+                    data, 
+                    pil_img2rgb(Image.fromarray(next_images)),
+                    need_loss=True, 
+                    need_vae=True, 
+                    need_vit=False, 
+                )
             if "action" in sample.keys():
                 actions = sample['action']
                 actions = actions[:, :self.action_horizon, :]
@@ -421,6 +423,7 @@ class PackedDataset:
         data_status=None,
         action_dim=7,
         action_horizon=5,
+        visual_gen=True,
     ):
         self.expected_num_tokens = expected_num_tokens
         self.max_num_tokens_per_sample = max_num_tokens_per_sample
@@ -432,6 +435,7 @@ class PackedDataset:
         for k, v in special_tokens.items():
             setattr(self, k, v)
         self.action_dim, self.action_horizon = action_dim, action_horizon
+        self.visual_gen = visual_gen
         self.dataset = self.build_datasets("unified_edit")
         self.data_config = data_config
         self.interpolate_pos = interpolate_pos
@@ -439,7 +443,7 @@ class PackedDataset:
             self.get_flattened_position_ids = get_flattened_position_ids_interpolate
         else:
             self.get_flattened_position_ids = get_flattened_position_ids_extrapolate
-
+        
     def build_datasets(self, dataset_name):
         dataset_args = {
             "image_transform_args": {
@@ -464,7 +468,7 @@ class PackedDataset:
         dataset_args['vit_transform'] = vit_transform
 
         data = UnifiedEditIterableDataset(transform, vit_transform, self.tokenizer, 
-                action_dim = self.action_dim, action_horizon = self.action_horizon)
+                action_dim = self.action_dim, action_horizon = self.action_horizon, visual_gen=self.visual_gen)
         return data
 
     def set_epoch(self, seed):

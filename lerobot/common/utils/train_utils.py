@@ -72,8 +72,7 @@ def save_checkpoint(
     step: int,
     cfg: TrainPipelineConfig,
     policy: PreTrainedPolicy,
-    optimizer: Optimizer,
-    scheduler: LRScheduler | None = None,
+    policy_,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -99,7 +98,7 @@ def save_checkpoint(
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
-    save_training_state(checkpoint_dir, step, optimizer, scheduler)
+    save_training_state(checkpoint_dir, step, policy_.optimizer, policy_.lr_scheduler)
 
 
 def save_training_state(
@@ -130,7 +129,7 @@ def save_training_state(
 
 
 def load_training_state(
-    checkpoint_dir: Path, optimizer: Optimizer, scheduler: LRScheduler | None
+    checkpoint_dir, policy, optimizer: Optimizer, scheduler: LRScheduler | None
 ) -> tuple[int, Optimizer, LRScheduler | None]:
     """
     Loads the training step, optimizer state, scheduler state, and rng state.
@@ -154,9 +153,9 @@ def load_training_state(
 
     load_rng_state(training_state_dir)
     step = load_training_step(training_state_dir)
-    optimizer = load_optimizer_state(optimizer, training_state_dir)
+    optimizer = load_optimizer_state(policy.optimizer, training_state_dir)
     if scheduler is not None:
-        scheduler = load_scheduler_state(scheduler, training_state_dir)
+        scheduler = load_scheduler_state(policy.scheduler, training_state_dir)
 
     return step, optimizer, scheduler
 

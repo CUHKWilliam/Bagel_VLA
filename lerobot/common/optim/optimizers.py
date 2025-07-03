@@ -106,7 +106,11 @@ def load_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> to
     current_state_dict = optimizer.state_dict()
     flat_state = load_file(save_dir / OPTIMIZER_STATE)
     state = unflatten_dict(flat_state)
-    loaded_state_dict = {"state": {int(k): v for k, v in state["state"].items()}}
+
+    if "state" in state.keys():
+        loaded_state_dict = {"state": {int(k): v for k, v in state["state"].items()}}
+    else:
+        loaded_state_dict = {"state": {}}
 
     if "param_groups" in current_state_dict:
         param_groups = deserialize_json_into_object(
