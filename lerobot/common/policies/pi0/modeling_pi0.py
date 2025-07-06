@@ -146,7 +146,7 @@ class DataArguments:
 @dataclass
 class ModelArguments:
     model_path: str = field(
-        default="/home/wltang/lerobot/weight/BAGEL-7B-MoT",
+        default="/root/lerobot/weight/BAGEL-7B-MoT",
         metadata={"help": "Path of the pretrained BAGEL model."}
     )
     llm_path: str = field(
@@ -274,7 +274,7 @@ class TrainingArguments:
         metadata={"help": "Automatically pick up the latest checkpoint found in checkpoint_dir."}
     )
     resume_from: str = field(
-        default="/home/wltang/lerobot/weight/BAGEL-7B-MoT",
+        default="/root/lerobot/weight/BAGEL-7B-MoT",
         metadata={"help": "Explicit checkpoint path to resume from (overrides auto_resume)." }
     )
     resume_model_only: bool = field(
@@ -597,7 +597,6 @@ class PI0Policy(PreTrainedPolicy):
         config: PI0Config,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
-        import ipdb;ipdb.set_trace()
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of

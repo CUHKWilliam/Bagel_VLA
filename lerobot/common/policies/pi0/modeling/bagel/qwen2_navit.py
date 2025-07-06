@@ -1376,7 +1376,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         # layer_module = Decoder_layer_dict[config.layer_module]
-        NUM_ACTION_LAYERS = 3
+        NUM_ACTION_LAYERS = 1
         self.layers = nn.ModuleList(
             [Qwen2MoTDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers - NUM_ACTION_LAYERS)] \
                 + [Qwen2MoTDecoderLayer2(config, config.num_hidden_layers - NUM_ACTION_LAYERS + layer_idx) for layer_idx in range(NUM_ACTION_LAYERS)] 
@@ -1447,7 +1447,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
             if packed_action_token_indexes is not None:
                 packed_sequence_[packed_action_token_indexes] = self.norm_moe_gen2(packed_sequence[packed_action_token_indexes])
 
-                print(self.norm_moe_gen2.weight)
             return packed_sequence_
         else:
             return self.norm(packed_sequence)
