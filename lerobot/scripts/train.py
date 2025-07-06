@@ -216,7 +216,7 @@ def train(cfg: TrainPipelineConfig):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=cfg.num_workers, ## TODO: set worker
+        num_workers=0, # cfg.num_workers, ## TODO: set worker
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
@@ -230,7 +230,6 @@ def train(cfg: TrainPipelineConfig):
         dataloader, 
         None,
     )
-
     if cfg.resume:
         checkpoint_path = cfg.output_dir / "checkpoints" / "last"
         step, optimizer, lr_scheduler = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)

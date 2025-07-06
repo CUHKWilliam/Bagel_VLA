@@ -597,6 +597,7 @@ class PI0Policy(PreTrainedPolicy):
         config: PI0Config,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
+        import ipdb;ipdb.set_trace()
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -873,7 +874,7 @@ class PI0FlowMatching(nn.Module):
         # maybe freeze something:
         if training_args.action_gen:
             for name, param in bagel_model.named_parameters():
-                if "_moe_gen2" not in name or "action" not in name:
+                if "_moe_gen2" not in name and "action" not in name:
                     param.requires_grad = False
 
         # if training_args.freeze_vae and training_args.visual_gen:
@@ -922,7 +923,7 @@ class PI0FlowMatching(nn.Module):
         )
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.act_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, 1)
+        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, self.bagel_model.action_dim * self.bagel_model.action_horizon)
         self.set_requires_grad()
 
 
@@ -1026,9 +1027,9 @@ class PI0FlowMatching(nn.Module):
         last_hidden_state = ret['last_hidden_state']
         action_mse = None
         if self.bagel_model.config.action_gen:
-            # Original openpi code, upcast attention output
-            action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])
-            action_pred = action_pred[:, 0]
+            ## TODO: need to refine the code 
+            action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])[0]
+            # action_pred = action_pred.view(self.bagel_model.action_horizon, self.bagel_model.action_dim)
             action_mse = F.l1_loss(action_pred, data_batch['packed_action_tokens'], reduction="none")
         loss_dict = {}
         if self.bagel_model.config.action_gen:
@@ -1037,14 +1038,12 @@ class PI0FlowMatching(nn.Module):
         loss = 0
         if ce is not None:
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
-            dist.all_reduce(total_ce_tokens, op=dist.ReduceOp.SUM)
             if training_args.ce_loss_reweighting:
                 ce = ce * ce_loss_weights
                 total_ce_loss_weights = ce_loss_weights.sum()
-                dist.all_reduce(total_ce_loss_weights, op=dist.ReduceOp.SUM)
-                ce = ce.sum() * dist.get_world_size() / total_ce_loss_weights
+                ce = ce.sum() / total_ce_loss_weights
             else:
-                ce = ce.sum() * dist.get_world_size() / total_ce_tokens
+                ce = ce.sum() / total_ce_tokens
             loss_dict["ce"] = ce.detach()
             loss = loss + ce * self.bagel_model.config.ce_weight
         else:
@@ -1053,8 +1052,7 @@ class PI0FlowMatching(nn.Module):
 
         if self.bagel_model.config.visual_gen:
             total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
-            dist.all_reduce(total_mse_tokens, op=dist.ReduceOp.SUM)
-            mse = mse.mean(dim=-1).sum() * dist.get_world_size() / total_mse_tokens
+            mse = mse.mean(dim=-1).sum() / total_mse_tokens
             loss_dict["mse"] = mse.detach()
             loss = loss + mse * self.bagel_model.config.mse_weight
         else:
@@ -1063,10 +1061,9 @@ class PI0FlowMatching(nn.Module):
 
         if self.bagel_model.config.action_gen:
             total_action_tokens = torch.tensor(len(data_batch['action_loss_indexes'])).cuda()
-            dist.all_reduce(total_action_tokens, op=dist.ReduceOp.SUM)
-            action_mse = action_mse.mean(dim=-1).sum() * dist.get_world_size() / total_action_tokens
-            loss_dict["action_mse"] = action_mse.detach()
-            loss = loss + action_mse * self.bagel_model.config.action_mse_weight
+            action_mse_mean = action_mse.mean(dim=-1).sum() / total_action_tokens
+            loss_dict["action_mse"] = action_mse_mean.detach()
+            loss = loss + action_mse_mean * self.bagel_model.config.action_mse_weight
         else:
             loss_dict["action_mse"] = torch.tensor(0).cuda()
             total_action_mse_tokens = torch.tensor(0).cuda()
@@ -1203,7 +1200,7 @@ class PI0FlowMatching(nn.Module):
             past_key_values=past_key_values,
             **generation_input,
         )
-        action_pred = self.act_out_proj(unpacked_latent[1:-1])[:, 0]
+        action_pred = self.act_out_proj(unpacked_latent[1:-1])[0]
         action_pred = action_pred.view(self.bagel_model.action_horizon, -1)
         return action_pred, predict_images
 

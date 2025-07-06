@@ -677,6 +677,7 @@ class PackedDataset:
                         max_num_patches_per_side=self.data_config.max_num_patch_per_side
                     )
                 )
+                
 
                 # add a <|endofimage|> token
                 sequence_status['packed_text_ids'].append(self.end_of_image)

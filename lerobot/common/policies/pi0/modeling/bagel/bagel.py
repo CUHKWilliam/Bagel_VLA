@@ -334,14 +334,13 @@ class Bagel(PreTrainedModel):
                 packed_gen_token_indexes=packed_vae_token_indexes,
                 packed_action_token_indexes=packed_action_token_indexes,
             )
-        with torch.no_grad():
-            last_hidden_state = self.language_model(
-                packed_sequence=packed_sequence,
-                sample_lens=sample_lens,
-                attention_mask=attention_mask,
-                packed_position_ids=packed_position_ids,
-                **extra_inputs,
-            )
+        last_hidden_state = self.language_model(
+            packed_sequence=packed_sequence,
+            sample_lens=sample_lens,
+            attention_mask=attention_mask,
+            packed_position_ids=packed_position_ids,
+            **extra_inputs,
+        )
 
         mse = None
         if self.config.visual_gen:

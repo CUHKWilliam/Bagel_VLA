@@ -39,7 +39,7 @@ class TrainPipelineConfig(HubMixin):
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
-    output_dir: Path | None = Path("outputs/train/2025-07-03/11-46-49_pi0")
+    output_dir: Path | None = Path("outputs/train/debug/overfit_onesample")
     job_name: str | None = None
     # Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
     # `dir` is the directory of an existing run with at least one checkpoint in it.
@@ -53,11 +53,11 @@ class TrainPipelineConfig(HubMixin):
     num_workers: int = 4
     batch_size: int = 2 ## TODO: not use for now
     steps: int = 60_000
-    eval_freq: int = 2000
+    eval_freq: int = 10_000
     log_freq: int = 200
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
-    save_freq: int = 2000
+    save_freq: int = 10_000
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
