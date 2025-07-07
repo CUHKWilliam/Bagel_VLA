@@ -27,7 +27,7 @@ T = TypeVar("T", bound=JsonLike)
 
 def write_video(video_path, stacked_frames, fps):
     width, height = stacked_frames[0].shape[1], stacked_frames[0].shape[0]
-    video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 1, (width, height), fps=fps)
+    video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
     for image in stacked_frames:                                                         
         video.write(image)
     video.release()
