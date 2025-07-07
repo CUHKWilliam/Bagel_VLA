@@ -19,19 +19,19 @@ from pathlib import Path
 from typing import TypeVar
 
 import imageio
+import cv2
 
 JsonLike = str | int | float | bool | None | list["JsonLike"] | dict[str, "JsonLike"] | tuple["JsonLike", ...]
 T = TypeVar("T", bound=JsonLike)
 
 
 def write_video(video_path, stacked_frames, fps):
-    # Filter out DeprecationWarnings raised from pkg_resources
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", "pkg_resources is deprecated as an API", category=DeprecationWarning
-        )
-        imageio.mimsave(video_path, stacked_frames, fps=fps)
-
+    width, height = stacked_frames[0].shape[1], stacked_frames[0].shape[0]
+    video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 1, (width, height), fps=fps)
+    for image in stacked_frames:                                                         
+        video.write(image)
+    video.release()
+    cv2.destroyAllWindows() 
 
 def deserialize_json_into_object(fpath: Path, obj: T) -> T:
     """
