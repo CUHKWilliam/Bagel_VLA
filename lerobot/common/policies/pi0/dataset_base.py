@@ -364,6 +364,18 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     need_vit=False, 
                 )
             if "action" in sample.keys():
+                current_images = []
+                for key in sample.keys():
+                    if "images." in key and "current" in key:
+                        current_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+                current_image = cv2.hconcat(current_images)
+                data = self._add_image(
+                    data, 
+                    pil_img2rgb(Image.fromarray(current_image)),
+                    need_loss=False, 
+                    need_vae=False, 
+                    need_vit=True, 
+                )
                 actions = sample['action']
                 actions = actions[:, :self.action_horizon, :]
                 if actions.size(1) == 6:
