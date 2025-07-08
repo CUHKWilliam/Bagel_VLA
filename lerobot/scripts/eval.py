@@ -168,6 +168,8 @@ def rollout(
         with torch.inference_mode():
             actions, predicted_images = policy.select_action(observation)
         observation_image = cv2.hconcat([raw_observation['pixels']['agentview_image'], raw_observation['pixels']['robot0_eye_in_hand_image']])
+        cv2.imwrite('debug.png', observation_image)
+        import ipdb;ipdb.set_trace()
         if predicted_images is not None:
             observation_predicted_image = cv2.vconcat([observation_image, np.asarray(predicted_images[0])])
         else:
@@ -200,8 +202,8 @@ def rollout(
 
         step += 1
         raw_observation['pixels'] = {
-            "agentview_image": new_observation['agentview_image'],
-            "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'],
+                "agentview_image": new_observation['agentview_image'][::-1, :, :].copy(),
+                "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'][::-1, :, :].copy(),
         }
     # Track the final observation.
     if return_observations:

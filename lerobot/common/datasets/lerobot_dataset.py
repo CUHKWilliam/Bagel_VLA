@@ -728,6 +728,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.delta_indices is not None:
             query_indices, padding = self._get_query_indices(idx, ep_idx)
             query_result = self._query_hf_dataset(query_indices)
+            query_result['action'] *= torch.logical_not(padding['action_is_pad'])[:, None]
             item = {**item, **padding}
             for key, val in query_result.items():
                 item[key] = val

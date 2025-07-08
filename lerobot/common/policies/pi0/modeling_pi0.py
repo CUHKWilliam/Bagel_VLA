@@ -1200,9 +1200,9 @@ class PI0FlowMatching(nn.Module):
         )
         action_pred = self.act_out_proj(unpacked_latent[1:-1])[0]
         action_pred = action_pred.view(self.bagel_model.action_horizon, -1)
-        grasp_threshold = 0.6 ## TODO: set grasping threshold
-        action_pred[action_pred[:, -1] > 0.6] = 1
-        action_pred[action_pred[:, -1] <= 0.6] = 0
+        grasp_threshold = 0. ## TODO: set grasping threshold
+        action_pred[action_pred[:, -1] > grasp_threshold][:, -1] = 1
+        action_pred[action_pred[:, -1] <= grasp_threshold][:, -1] = 0
         return action_pred, predict_images
 
     def denoise_step(
