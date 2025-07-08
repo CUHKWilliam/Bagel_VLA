@@ -366,8 +366,6 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             if "action" in sample.keys():
                 actions = sample['action']
                 actions = actions[:, :self.action_horizon, :]
-                if actions.size(1) == 6:
-                    actions = torch.cat([actions, torch.zeros((actions.size(0), actions.size(1), 1))], dim=-1)
                 sample['action'] = actions
                 data = self._add_action(
                     data,
