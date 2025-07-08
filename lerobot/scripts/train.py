@@ -177,8 +177,8 @@ def train(cfg: TrainPipelineConfig):
             # step over the environment
             env_args = {
                 "bddl_file_name": task_bddl_file,
-                "camera_heights": 128,
-                "camera_widths": 128
+                "camera_heights": 256,
+                "camera_widths": 256
             }
             env = OffScreenRenderEnv(**env_args)
             env.seed(0)

@@ -45,7 +45,7 @@ class TrainPipelineConfig(HubMixin):
     # `dir` is the directory of an existing run with at least one checkpoint in it.
     # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
     # regardless of what's provided with the training command at the time of resumption.
-    resume: bool = False
+    resume: bool = True
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
@@ -53,7 +53,7 @@ class TrainPipelineConfig(HubMixin):
     num_workers: int = 4
     batch_size: int = 2 ## TODO: not use for now
     steps: int = 60_000
-    eval_freq: int = 10_000
+    eval_freq: int = 1
     log_freq: int = 200
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.

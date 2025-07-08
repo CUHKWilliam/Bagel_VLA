@@ -127,8 +127,8 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
     observations = env.step([0] * 7)
-    observation1 = observations[0]['agentview_image']
-    observation2 = observations[0]['robot0_eye_in_hand_image']
+    observation1 = observations[0]['agentview_image'][::-1, :, :].copy()
+    observation2 = observations[0]['robot0_eye_in_hand_image'][::-1, :, :].copy()
     raw_observation = {
         "pixels":{
             "agentview_image": observation1,
