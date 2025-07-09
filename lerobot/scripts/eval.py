@@ -152,6 +152,7 @@ def rollout(
     max_steps = 50 ## TODO:
     # check_env_attributes_and_types(env)
     observation_predicted_images = []
+    past_key_values, newlens, new_rope = None, None, None
     while not done:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(raw_observation)
@@ -166,7 +167,7 @@ def rollout(
         # observation = add_envs_task(env, observation)
         observation['task'] = [env.language_instruction]
         with torch.inference_mode():
-            actions, predicted_images = policy.select_action(observation)
+            actions, predicted_images, past_key_values, newlens, new_rope = policy.select_action(observation, past_key_values=past_key_values, newlens=newlens, new_rope=new_rope)
         observation_image = cv2.hconcat([raw_observation['pixels']['agentview_image'], raw_observation['pixels']['robot0_eye_in_hand_image']])
         if predicted_images is not None:
             observation_predicted_image = cv2.vconcat([observation_image, np.asarray(predicted_images[0])])
