@@ -152,8 +152,11 @@ def rollout(
     max_steps = 50 ## TODO:
     # check_env_attributes_and_types(env)
     observation_predicted_images = []
-    past_key_values, newlens, new_rope = None, None, None
+    step_idx = 0
+    UPDATE_CONTEXT_EVERY = 25
     while not done:
+        if step_idx % UPDATE_CONTEXT_EVERY == 0:
+            past_key_values, newlens, new_rope = None, None, None
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(raw_observation)
         if return_observations:
@@ -182,6 +185,7 @@ def rollout(
             # Apply the next action.
             try:
                 new_observation, reward, done, info = env.step(action)
+                step_idx += 1
                 success = env.check_success()
                 if success:
                     break
