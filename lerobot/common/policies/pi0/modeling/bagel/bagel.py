@@ -1163,7 +1163,7 @@ class Bagel(PreTrainedModel):
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
         n_action_steps = self.config.n_action_steps
-        delta_timstep = torch.tensor(step_idx).to(torch.cuda.current_device())
+        delta_timestep = torch.tensor(step_idx).to(torch.cuda.current_device())
         action_token_pos_emb = self.action_latent_pos_embed(delta_timestep.long())
         packed_sequence[packed_action_token_indexes] = action_token_pos_emb
 

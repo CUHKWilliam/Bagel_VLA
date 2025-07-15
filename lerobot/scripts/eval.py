@@ -81,7 +81,7 @@ from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 import cv2
 import libero
-
+import copy
 def rollout(
     env,
     env_id,
@@ -135,6 +135,7 @@ def rollout(
             "robot0_eye_in_hand_image": observation2,
         }
     }
+    context_raw_observation = copy.deepcopy(raw_observation)
 
     if render_callback is not None:
         render_callback(env, env_id)
@@ -153,9 +154,10 @@ def rollout(
     # check_env_attributes_and_types(env)
     observation_predicted_images = []
     step_idx = 0
-    UPDATE_CONTEXT_EVERY = 25
+    UPDATE_CONTEXT_EVERY = 50
+    UPDATE_CONTEXT_OBSERVATION_EVERY = 25
     while not done:
-        if step_idx % UPDATE_CONTEXT_EVERY == 0:
+        if step_idx == UPDATE_CONTEXT_EVERY or step_idx == 0:
             past_key_values, newlens, new_rope = None, None, None
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(raw_observation)
@@ -164,13 +166,10 @@ def rollout(
         observation = {
             key: observation[key].to(device, non_blocking=device.type == "cuda").unsqueeze(0) for key in observation
         }
-        observation['action'] = torch.zeros((1, 5, 7)) ## TODO: set action horizon
-        # Infer "task" from attributes of environments.
-        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
-        # observation = add_envs_task(env, observation)
         observation['task'] = [env.language_instruction]
+        context_observation = copy.deepcopy(observation)
         with torch.inference_mode():
-            actions, predicted_images, past_key_values, newlens, new_rope = policy.select_action(observation, past_key_values=past_key_values, newlens=newlens, new_rope=new_rope, step_idx=step_idx)
+            actions, predicted_images, past_key_values, newlens, new_rope = policy.select_action(observation, context_observation, past_key_values=past_key_values, newlens=newlens, new_rope=new_rope, step_idx=step_idx)
         observation_image = cv2.hconcat([raw_observation['pixels']['agentview_image'], raw_observation['pixels']['robot0_eye_in_hand_image']])
         if predicted_images is not None:
             observation_predicted_image = cv2.vconcat([observation_image, np.asarray(predicted_images[0])])
@@ -208,6 +207,9 @@ def rollout(
             "agentview_image": new_observation['agentview_image'],
             "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'],
         }
+        if step_idx == UPDATE_CONTEXT_IMAGE_EVERY:
+            context_raw_observation = copy.deepcopy(raw_observation)
+            step_idx = 0
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)

@@ -98,6 +98,7 @@ import cv2
 from .tokenizer import ActionTokenizer
 from PIL import Image
 from safetensors.torch import load_file
+import copy
 
 def autocast(data_batch, dtype1, dtype2):
     for key in data_batch.keys():
@@ -629,7 +630,7 @@ class PI0Policy(PreTrainedPolicy):
         return self.parameters()
 
     @torch.no_grad
-    def select_action(self, batch, past_key_values, newlens, new_rope, step_idx) -> Tensor:
+    def select_action(self, batch, context_batch, past_key_values, newlens, new_rope, step_idx) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -637,7 +638,7 @@ class PI0Policy(PreTrainedPolicy):
         queue is empty.
         """
         self.eval()
-        ret = self.model.sample_actions(batch, past_key_values, newlens, new_rope, step_idx)
+        ret = self.model.sample_actions(batch, context_batch, past_key_values, newlens, new_rope, step_idx)
         return ret
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
@@ -1071,7 +1072,7 @@ class PI0FlowMatching(nn.Module):
     def generate_image(self, images, instruction, ):
         self.bagel_model.chat(self.tokenizer, )
 
-    def sample_actions(self, batch, past_key_values=None, newlens=None, new_rope=None, step_idx = 0) -> Tensor:
+    def sample_actions(self, batch, context_batxh, past_key_values=None, newlens=None, new_rope=None, step_idx = 0) -> Tensor:
         device = next(self.bagel_model.parameters()).device
         new_token_ids = self.new_token_ids
         if isinstance(new_token_ids, dict):
@@ -1088,9 +1089,9 @@ class PI0FlowMatching(nn.Module):
             new_rope = [0]
 
             observation_images = []
-            for key in batch.keys():
+            for key in context_batch.keys():
                 if "images." in key and "observation" in key:
-                    observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+                    observation_images.append((context_batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
             observation_image = cv2.hconcat(observation_images)
         
             # add images
@@ -1199,7 +1200,7 @@ class PI0FlowMatching(nn.Module):
                 current_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
         current_image = cv2.hconcat(current_images)
         image = Image.fromarray(current_image)
-        generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
+        generation_input, newlens2, new_rope2 = self.bagel_model.prepare_vit_images(
             curr_kvlens=newlens,
             curr_rope=new_rope, 
             images=[image], 
@@ -1210,20 +1211,20 @@ class PI0FlowMatching(nn.Module):
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
         generation_input = autocast(generation_input, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
-        import ipdb;ipdb.set_trace()
-        past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+        past_key_values2 = self.bagel_model.forward_cache_update_vit(copy.deepcopy(past_key_values), **generation_input)
 
         ## For action
-        generation_input = self.bagel_model.prepare_action(newlens, new_rope, new_token_ids, step_idx=step_idx)
+        generation_input = self.bagel_model.prepare_action(newlens2, new_rope2, new_token_ids, step_idx=step_idx)
         for k, v in generation_input.items():
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
         unpacked_latent = self.bagel_model.generate_action(
-            past_key_values=past_key_values,
+            past_key_values=past_key_values2,
             **generation_input,
         )
         action_pred = self.act_out_proj(unpacked_latent[1:-1])[0]
         action_pred = action_pred.view(self.bagel_model.action_horizon, -1)
+        import ipdb;ipdb.set_trace()
         return action_pred, predict_images, past_key_values, newlens, new_rope
 
     def denoise_step(
