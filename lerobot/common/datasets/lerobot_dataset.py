@@ -735,15 +735,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ts = item["timestamp"].item()
             end_ts = ts + 1/self.fps * float(len(self.delta_indices['action']))
             next_timestamps = self._get_query_timestamps(end_ts, query_indices) ## TODO: set next timestamp delta time
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+            query_timestamps = self._get_query_timestamps(ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
             next_video_frames = self._query_videos(next_timestamps, ep_idx)
             next_video_frames2 = {}
             for k in next_video_frames.keys():
                 next_video_frames2[f"next.{k.replace('observation.', '')}"] = next_video_frames[k]
-
         
-            current_ts = current_ts + np.random.rand() * (end_ts - ts)
+            current_ts = ts + np.random.rand() * (end_ts - ts)
             current_timestamps = self._get_query_timestamps(current_ts, query_indices) ## TODO: set next timestamp delta time
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
@@ -751,8 +750,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             current_video_frames2 = {}
             for k in next_video_frames.keys():
                 current_video_frames2[f"current.{k.replace('observation.', '')}"] = next_video_frames[k]
-           
+             
             item = {**video_frames, **item, **next_video_frames2, **current_video_frames2}
+            item['delta_timestep'] = (current_ts - ts) * self.fps
 
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys

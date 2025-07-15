@@ -110,7 +110,7 @@ def autocast(data_batch, dtype1, dtype2):
 @dataclass
 class DataArguments:
     dataset_config_file: str = field(
-        default="data/configs/example.yaml",
+        default="../lerobot/data/configs/example.yaml",
         metadata={"help": "YAML file specifying dataset groups, weights, and preprocessing rules."}
     )
     prefetch_factor: int = field(
@@ -240,7 +240,7 @@ class TrainingArguments:
         metadata={"help": "Root directory for logs."}
     )
     checkpoint_dir: str = field(
-        default="ckpts",
+        default="../lerobot/ckpts",
         metadata={"help": "Root directory for model checkpoints."}
     )
     wandb_project: str = field(
@@ -629,7 +629,7 @@ class PI0Policy(PreTrainedPolicy):
         return self.parameters()
 
     @torch.no_grad
-    def select_action(self, batch, past_key_values, newlens, new_rope) -> Tensor:
+    def select_action(self, batch, past_key_values, newlens, new_rope, step_idx) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -637,9 +637,7 @@ class PI0Policy(PreTrainedPolicy):
         queue is empty.
         """
         self.eval()
-        ret = self.model.sample_actions(batch, past_key_values, newlens, new_rope)
-        # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-        # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+        ret = self.model.sample_actions(batch, past_key_values, newlens, new_rope, step_idx)
         return ret
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
@@ -954,10 +952,11 @@ class PI0FlowMatching(nn.Module):
             data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
             with torch.no_grad():
                 data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
-
+        
         if "packed_action_tokens" in data_batch.keys():
             with torch.no_grad():
-                data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
+                data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}") 
+                data_batch['delta_timestep'] = torch.tensor(data_batch['delta_timestep']).to(f"cuda:{torch.cuda.current_device()}")
         return data_batch
 
     def embed_suffix(self, noisy_actions, timestep):
@@ -1072,7 +1071,7 @@ class PI0FlowMatching(nn.Module):
     def generate_image(self, images, instruction, ):
         self.bagel_model.chat(self.tokenizer, )
 
-    def sample_actions(self, batch, past_key_values=None, newlens=None, new_rope=None) -> Tensor:
+    def sample_actions(self, batch, past_key_values=None, newlens=None, new_rope=None, step_idx = 0) -> Tensor:
         device = next(self.bagel_model.parameters()).device
         new_token_ids = self.new_token_ids
         if isinstance(new_token_ids, dict):
@@ -1211,10 +1210,11 @@ class PI0FlowMatching(nn.Module):
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
         generation_input = autocast(generation_input, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
+        import ipdb;ipdb.set_trace()
         past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
 
         ## For action
-        generation_input = self.bagel_model.prepare_action(newlens, new_rope, new_token_ids)
+        generation_input = self.bagel_model.prepare_action(newlens, new_rope, new_token_ids, step_idx=step_idx)
         for k, v in generation_input.items():
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)

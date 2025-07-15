@@ -191,6 +191,7 @@ class Bagel(PreTrainedModel):
         self.vae2llm = nn.Linear(self.patch_latent_dim, self.hidden_size)
         self.llm2vae = nn.Linear(self.hidden_size, self.patch_latent_dim)
         self.latent_pos_embed = PositionEmbedding(self.max_latent_size, self.hidden_size)
+        self.action_latent_pos_embed = PositionEmbedding(200, self.hidden_size) ## TODO: set 200
 
         if config.visual_und:
             self.vit_model = vit_model
@@ -244,6 +245,7 @@ class Bagel(PreTrainedModel):
         packed_action_position_ids: Optional[torch.LongTensor] = None,
         packed_action_token_indexes: Optional[torch.LongTensor] = None,
         action_loss_indexes: Optional[torch.BoolTensor] = None,
+        delta_timestep: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -321,7 +323,7 @@ class Bagel(PreTrainedModel):
 
         if self.config.action_gen:
             n_action_steps = self.config.n_action_steps
-            action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids[1:-1] - packed_action_position_ids[1])
+            action_token_pos_emb = self.action_latent_pos_embed(delta_timestep.long())
             packed_sequence[packed_action_token_indexes] = action_token_pos_emb
 
         extra_inputs = {}
@@ -1020,7 +1022,7 @@ class Bagel(PreTrainedModel):
 
         return generation_input
 
-    def prepare_action(self, curr_kvlens, curr_rope, new_token_ids):
+    def prepare_action(self, curr_kvlens, curr_rope, new_token_ids, step_idx):
         packed_text_ids, packed_text_indexes = list(), list()
         packed_action_position_ids, packed_action_token_indexes = list(), list()
         packed_query_position_ids, packed_seqlens, packed_query_indexes = list(), list(), list()
@@ -1065,6 +1067,7 @@ class Bagel(PreTrainedModel):
             "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
             "packed_query_indexes": torch.tensor(packed_query_indexes, dtype=torch.long),
             "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
+            "step_idx": step_idx
         }
 
         return generation_input
@@ -1154,14 +1157,16 @@ class Bagel(PreTrainedModel):
         packed_action_token_indexes: torch.LongTensor,
         packed_query_position_ids: torch.LongTensor,
         packed_query_indexes: torch.LongTensor,
+        step_idx: torch.LongTensor,
     ):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
         n_action_steps = self.config.n_action_steps
-        action_token_pos_emb = self.latent_pos_embed(packed_query_position_ids[1:-1] - packed_query_position_ids[1])
+        delta_timstep = torch.tensor(step_idx).to(torch.cuda.current_device())
+        action_token_pos_emb = self.action_latent_pos_embed(delta_timestep.long())
         packed_sequence[packed_action_token_indexes] = action_token_pos_emb
-        
+
         extra_inputs = {}
         if self.use_moe:
             extra_inputs = {

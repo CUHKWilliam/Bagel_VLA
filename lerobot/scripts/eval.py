@@ -170,7 +170,7 @@ def rollout(
         # observation = add_envs_task(env, observation)
         observation['task'] = [env.language_instruction]
         with torch.inference_mode():
-            actions, predicted_images, past_key_values, newlens, new_rope = policy.select_action(observation, past_key_values=past_key_values, newlens=newlens, new_rope=new_rope)
+            actions, predicted_images, past_key_values, newlens, new_rope = policy.select_action(observation, past_key_values=past_key_values, newlens=newlens, new_rope=new_rope, step_idx=step_idx)
         observation_image = cv2.hconcat([raw_observation['pixels']['agentview_image'], raw_observation['pixels']['robot0_eye_in_hand_image']])
         if predicted_images is not None:
             observation_predicted_image = cv2.vconcat([observation_image, np.asarray(predicted_images[0])])

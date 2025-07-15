@@ -365,6 +365,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                 )
             if "action" in sample.keys():
                 current_images = []
+                data['delta_timestep'] = sample['delta_timestep']
                 for key in sample.keys():
                     if "images." in key and "current" in key:
                         current_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
@@ -571,6 +572,7 @@ class PackedDataset:
             data['packed_action_position_ids'] = torch.tensor(sequence_status['packed_action_position_ids'])
             data['packed_action_token_indexes'] = torch.tensor(sequence_status['packed_action_token_indexes'])
             data['action_loss_indexes'] = torch.tensor(sequence_status['action_loss_indexes'])
+            data['delta_timestep'] = torch.tensor(sequence_status['delta_timestep'])
         return data
 
     def __call__(self, sample):
@@ -588,7 +590,6 @@ class PackedDataset:
         image_tensor_list = sample['image_tensor_list']
         text_ids_list = sample['text_ids_list']
         sequence_plan = sample['sequence_plan']
-
         split_lens, attn_modes = list(), list()
         curr = sequence_status['curr']
         curr_rope_id = 0
@@ -782,6 +783,8 @@ class PackedDataset:
         else:
             sequence_status['split_lens'].extend(split_lens)
             sequence_status['attn_modes'].extend(attn_modes)
+        if "delta_timestep" in sample.keys():
+            sequence_status['delta_timestep'] = sample['delta_timestep']
         return sequence_status
 
 
@@ -828,6 +831,7 @@ class SimpleCustomBatch:
             self.packed_action_position_ids = data["packed_action_position_ids"]
             self.packed_action_token_indexes = data["packed_action_token_indexes"]
             self.action_loss_indexes = data["action_loss_indexes"]
+            self.delta_timestep = data['delta_timestep']
 
     def pin_memory(self):
         self.packed_text_ids = self.packed_text_ids.pin_memory()
@@ -862,7 +866,7 @@ class SimpleCustomBatch:
             self.packed_action_position_ids = self.packed_action_position_ids.pin_memory()
             self.packed_action_token_indexes = self.packed_action_token_indexes.pin_memory()
             self.action_loss_indexes = self.action_loss_indexes.pin_memory()
-
+            self.delta_timestep = self.delta_timestep.pin_memory()
         return self
 
     def cuda(self, device):
@@ -898,7 +902,7 @@ class SimpleCustomBatch:
             self.packed_action_position_ids = self.packed_action_position_ids.to(device)
             self.packed_action_token_indexes = self.packed_action_token_indexes.to(device)
             self.action_loss_indexes = self.action_loss_indexes.to(device)
-
+            self.delta_timestep = self.delta_timestep.to(device)
         return self
 
     def to_dict(self):
@@ -933,6 +937,7 @@ class SimpleCustomBatch:
             data['packed_action_position_ids'] = self.packed_action_position_ids
             data['packed_action_token_indexes'] = self.packed_action_token_indexes
             data['action_loss_indexes'] = self.action_loss_indexes
+            data['delta_timestep'] = self.delta_timestep
 
         if hasattr(self, 'packed_timesteps'):
             data['packed_timesteps'] = self.packed_timesteps
