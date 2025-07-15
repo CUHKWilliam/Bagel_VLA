@@ -1072,7 +1072,7 @@ class PI0FlowMatching(nn.Module):
     def generate_image(self, images, instruction, ):
         self.bagel_model.chat(self.tokenizer, )
 
-    def sample_actions(self, batch, context_batxh, past_key_values=None, newlens=None, new_rope=None, step_idx = 0) -> Tensor:
+    def sample_actions(self, batch, context_batch, past_key_values=None, newlens=None, new_rope=None, step_idx = 0) -> Tensor:
         device = next(self.bagel_model.parameters()).device
         new_token_ids = self.new_token_ids
         if isinstance(new_token_ids, dict):

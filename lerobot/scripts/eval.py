@@ -207,7 +207,7 @@ def rollout(
             "agentview_image": new_observation['agentview_image'],
             "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'],
         }
-        if step_idx == UPDATE_CONTEXT_IMAGE_EVERY:
+        if step_idx == UPDATE_CONTEXT_EVERY:
             context_raw_observation = copy.deepcopy(raw_observation)
             step_idx = 0
     # Track the final observation.
