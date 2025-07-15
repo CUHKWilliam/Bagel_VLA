@@ -616,7 +616,6 @@ class PI0Policy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
 
         self.reset()
@@ -693,26 +692,6 @@ class PI0Policy(PreTrainedPolicy):
             img_masks.append(mask)
 
         return images, img_masks
-
-    def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
-        """Tokenize the text input"""
-        device = batch[OBS_ROBOT].device
-        tasks = batch["task"]
-
-        # PaliGemma prompt has to end with a new line
-        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
-
-        tokenized_prompt = self.language_tokenizer.__call__(
-            tasks,
-            padding="max_length",
-            padding_side="right",
-            max_length=self.config.tokenizer_max_length,
-            return_tensors="pt",
-        )
-        lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
 
     def _pi_aloha_decode_state(self, state):
         # Flip the joints.
