@@ -70,8 +70,11 @@ def update_policy(
     policy.train()
     loss, output_dict = policy.forward(batch)
     policy.backward(loss)
-
-    policy.step()
+    try:
+        policy.step()
+    except:
+        print('backward error')
+        pass
     lr_scheduler.step() if lr_scheduler is not None else None
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
