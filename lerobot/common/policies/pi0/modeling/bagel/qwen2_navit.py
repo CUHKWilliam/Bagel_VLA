@@ -816,7 +816,7 @@ class PackedAttentionMoT2(Qwen2Attention):
 
             packed_key_states = packed_key_states.to(torch.float32)
             packed_key_states[packed_text_indexes] = self.k_norm(packed_key_states[packed_text_indexes])
-            packed_key_states[packed_action_token_indexes] = self.k_norm_moe_gen(packed_key_states[packed_action_token_indexes])
+            packed_key_states[packed_action_token_indexes] = self.k_norm_moe_gen2(packed_key_states[packed_action_token_indexes])
 
 
         packed_cos, packed_sin = packed_query_position_embeddings
@@ -1138,7 +1138,7 @@ class Qwen2MoTDecoderLayer2(nn.Module):
         if packed_gen_token_indexes is not None:
             packed_sequence_[packed_gen_token_indexes] = self.input_layernorm_moe_gen(packed_sequence[packed_gen_token_indexes])
         if packed_action_token_indexes is not None:
-            packed_sequence_[packed_action_token_indexes] = self.input_layernorm_moe_gen(packed_sequence[packed_action_token_indexes])
+            packed_sequence_[packed_action_token_indexes] = self.input_layernorm_moe_gen2(packed_sequence[packed_action_token_indexes])
 
         # Self Attention
         packed_sequence_ = self.self_attn(
