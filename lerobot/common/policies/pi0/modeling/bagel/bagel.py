@@ -322,7 +322,6 @@ class Bagel(PreTrainedModel):
             n_action_steps = self.config.n_action_steps
             action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids)
             packed_sequence[packed_action_token_indexes] = action_token_pos_emb
-            import ipdb;ipdb.set_trace()
 
         extra_inputs = {}
         if self.use_moe:
@@ -341,7 +340,6 @@ class Bagel(PreTrainedModel):
             packed_position_ids=packed_position_ids,
             **extra_inputs,
         )
-        import ipdb;ipdb.set_trace()
 
         mse = None
         if self.config.visual_gen:
@@ -1181,7 +1179,6 @@ class Bagel(PreTrainedModel):
             is_causal=False,
             **extra_inputs,
         )
-        import ipdb;ipdb.set_trace()
         return output.packed_query_sequence
 
     # for evaluation

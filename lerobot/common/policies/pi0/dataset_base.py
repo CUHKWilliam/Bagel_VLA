@@ -617,7 +617,6 @@ class PackedDataset:
                 curr_rope_id += curr_split_len
             elif item['type'] == "action":
                 action_tensor = sample['action'][0][0]
-                action_tensor = action_tensor.view(-1)
                 # add a <|startofaction|> token
                 sequence_status['packed_text_ids'].append(self.boa_token_id)
                 sequence_status['packed_text_indexes'].append(curr)

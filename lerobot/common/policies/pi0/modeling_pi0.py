@@ -901,7 +901,7 @@ class PI0FlowMatching(nn.Module):
         )
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.act_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, self.bagel_model.action_dim * self.bagel_model.action_horizon)
+        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, self.bagel_model.action_dim)
         self.set_requires_grad()
 
 
@@ -1006,9 +1006,12 @@ class PI0FlowMatching(nn.Module):
         action_mse = None
         if self.bagel_model.config.action_gen:
             ## TODO: need to refine the code 
-            action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])[0]
-            # action_pred = action_pred.view(self.bagel_model.action_horizon, self.bagel_model.action_dim)
-            action_mse = F.l1_loss(action_pred, data_batch['packed_action_tokens'], reduction="none")
+            action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])
+            action_pred = action_pred.view(self.bagel_model.action_horizon, self.bagel_model.action_dim)
+            action_pred[:, -1] = torch.sigmoid(action_pred[:, -1])
+            action_gt = data_batch['packed_action_tokens']
+            action_gt[:, -1] = torch.sigmoid(action_gt[:, -1])
+            action_mse = F.l1_loss(action_pred, action_gt, reduction="none")
         loss_dict = {}
         if self.bagel_model.config.action_gen:
             loss_dict['predict_action'] = action_pred
@@ -1178,7 +1181,7 @@ class PI0FlowMatching(nn.Module):
             past_key_values=past_key_values,
             **generation_input,
         )
-        action_pred = self.act_out_proj(unpacked_latent[1:-1])[0]
+        action_pred = self.act_out_proj(unpacked_latent[1:-1])
         action_pred = action_pred.view(self.bagel_model.action_horizon, -1)
         grasp_threshold = 0. ## TODO: set grasping threshold
         action_pred[action_pred[:, -1] > grasp_threshold][:, -1] = 1

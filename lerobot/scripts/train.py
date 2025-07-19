@@ -69,12 +69,23 @@ def update_policy(
     device = get_device_from_parameters(policy)
     policy.train()
     loss, output_dict = policy.forward(batch)
+    raw_observation = {
+        "pixels":{
+            "agentview_image": (batch['observation.images.image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+            "robot0_eye_in_hand_image": (batch['observation.images.wrist_image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+        }
+    }
+    from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
+    observation = preprocess_observation(raw_observation)
+    observation = {
+        key: observation[key].to(torch.cuda.current_device()).unsqueeze(0) for key in observation
+    }
+    observation['task'] = batch['task']
+    with torch.inference_mode():
+        actions, predicted_images, unpacked_latent = policy.select_action(observation)
+    import ipdb;ipdb.set_trace()
     policy.backward(loss)
-    try:
-        policy.step()
-    except:
-        print('backward error')
-        pass
+    policy.step()
     lr_scheduler.step() if lr_scheduler is not None else None
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
