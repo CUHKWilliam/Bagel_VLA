@@ -50,7 +50,7 @@ from lerobot.common.utils.utils import (
 from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.eval import eval_policy, validate_policy
 from accelerate import Accelerator
 from accelerate.utils import set_seed as accelerate_set_seed
 import os
@@ -70,8 +70,11 @@ def update_policy(
     policy.train()
     loss, output_dict = policy.forward(batch)
     policy.backward(loss)
-
-    policy.step()
+    try:
+        policy.step()
+    except:
+        print('step error')
+        pass
     lr_scheduler.step() if lr_scheduler is not None else None
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
@@ -113,7 +116,6 @@ def train(cfg: TrainPipelineConfig):
             wandb_logger = None
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
-    cfg.batch_size = 1
 
     accelerator.init_trackers(
         project_name=cfg.wandb.project,
@@ -220,7 +222,7 @@ def train(cfg: TrainPipelineConfig):
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        pin_memory=True,
+        pin_memory=False,
         drop_last=False,
     )
     # Prepare for distributed training
@@ -277,15 +279,16 @@ def train(cfg: TrainPipelineConfig):
             dl_iter = iter(dataloader)
             batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
-    
-        train_tracker, output_dict = update_policy(
-            train_tracker,
-            policy,
-            batch,
-            optimizer,
-            accelerator,
-            lr_scheduler=lr_scheduler,
-        )
+        if True:
+            train_tracker, output_dict = update_policy(
+                train_tracker,
+                policy,
+                batch,
+                optimizer,
+                accelerator,
+                lr_scheduler=lr_scheduler,
+            )
+
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
@@ -314,13 +317,14 @@ def train(cfg: TrainPipelineConfig):
         if cfg.save_checkpoint and is_saving_step:
             accelerator.wait_for_everyone()
 
-        if cfg.save_checkpoint and is_saving_step and accelerator.is_main_process:
+        if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             # Unwrap model for saving
             unwrapped_policy = accelerator.unwrap_model(policy)
             save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, policy)
-            update_last_checkpoint(checkpoint_dir)
+            if accelerator.is_main_process:
+                update_last_checkpoint(checkpoint_dir)
         
         if cfg.save_checkpoint and is_saving_step:
             accelerator.wait_for_everyone()
@@ -328,9 +332,26 @@ def train(cfg: TrainPipelineConfig):
         if is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
+
             # Unwrap model for evaluation
             unwrapped_policy = accelerator.unwrap_model(policy)
             unwrapped_policy.eval()
+           
+            ## validate performance 
+            dl_iter_val = iter(dataloader)
+            val_total_steps = 100
+            if accelerator.is_main_process:
+                for val_step in range(val_total_steps):
+                    try:
+                        batch = next(dl_iter)
+                    except StopIteration:
+                        dl_iter = iter(dataloader)
+                        batch = next(dl_iter)          
+                    with torch.no_grad():
+                        val_info = validate_policy(
+                            unwrapped_policy,
+                            batch
+                        )
             process_index = accelerator.process_index
             num_processes = accelerator.num_processes
             local_eval_envs = eval_envs[accelerator.process_index::accelerator.num_processes] if accelerator.process_index in list(range(len(eval_envs))) else eval_envs
@@ -374,6 +395,8 @@ def train(cfg: TrainPipelineConfig):
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
             # Set back to training mode
             print("eval log dict done")
+            if accelerator.is_main_process:
+                import ipdb;ipdb.set_trace()
             policy.train()
     # Wait for all processes to finish
     accelerator.wait_for_everyone()

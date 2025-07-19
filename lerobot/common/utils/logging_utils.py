@@ -40,7 +40,7 @@ class AverageMeter:
         self.val = val
         self.sum[0] += val * n
         self.count[0] += n
-        self.avg = gather_object(self.sum)[0] / gather_object(self.count)[0]
+        self.avg = self.sum[0] / self.count[0]
 
     def __str__(self):
         fmtstr = "{name}:{avg" + self.fmt + "}"

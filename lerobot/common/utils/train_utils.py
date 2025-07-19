@@ -27,13 +27,14 @@ from lerobot.common.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from lerobot.common.datasets.utils import load_json, write_json
 from lerobot.common.optim.optimizers import load_optimizer_state, save_optimizer_state
 from lerobot.common.optim.schedulers import load_scheduler_state, save_scheduler_state
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.random_utils import load_rng_state, save_rng_state
 from lerobot.configs.train import TrainPipelineConfig
-
+import safetensors
 
 def log_output_dir(out_dir):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
@@ -96,7 +97,7 @@ def save_checkpoint(
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
-    policy.save_pretrained(pretrained_dir)
+    policy_.save_checkpoint(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
     save_training_state(checkpoint_dir, step, policy_.optimizer, policy_.lr_scheduler)
 
@@ -153,10 +154,10 @@ def load_training_state(
 
     load_rng_state(training_state_dir)
     step = load_training_step(training_state_dir)
-    optimizer = load_optimizer_state(policy.optimizer, training_state_dir)
+    # optimizer = load_optimizer_state(policy.optimizer, training_state_dir)
     if scheduler is not None:
         scheduler = load_scheduler_state(policy.scheduler, training_state_dir)
-
+    policy.load_checkpoint(checkpoint_dir / PRETRAINED_MODEL_DIR )
     return step, optimizer, scheduler
 
 

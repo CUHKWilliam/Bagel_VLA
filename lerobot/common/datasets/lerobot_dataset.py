@@ -721,36 +721,39 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-        item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
+        try:
+            item = self.hf_dataset[idx]
+            ep_idx = item["episode_index"].item()
 
-        query_indices = None
-        if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(idx, ep_idx)
-            query_result = self._query_hf_dataset(query_indices)
-            item = {**item, **padding}
-            for key, val in query_result.items():
-                item[key] = val
-        if len(self.meta.video_keys) > 0:
-            current_ts = item["timestamp"].item()
-            next_timestamps = self._get_query_timestamps(current_ts + 0.5, query_indices) ## TODO: set next timestamp delta time
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-            next_video_frames = self._query_videos(next_timestamps, ep_idx)
-            next_video_frames2 = {}
-            for k in next_video_frames.keys():
-                next_video_frames2[f"next.{k.replace('observation.', '')}"] = next_video_frames[k]
-            item = {**video_frames, **item, **next_video_frames2}
+            query_indices = None
+            if self.delta_indices is not None:
+                query_indices, padding = self._get_query_indices(idx, ep_idx)
+                query_result = self._query_hf_dataset(query_indices)
+                item = {**item, **padding}
+                for key, val in query_result.items():
+                    item[key] = val
+            if len(self.meta.video_keys) > 0:
+                current_ts = item["timestamp"].item()
+                next_timestamps = self._get_query_timestamps(current_ts + 0.5, query_indices) ## TODO: set next timestamp delta time
+                query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+                video_frames = self._query_videos(query_timestamps, ep_idx)
+                next_video_frames = self._query_videos(next_timestamps, ep_idx)
+                next_video_frames2 = {}
+                for k in next_video_frames.keys():
+                    next_video_frames2[f"next.{k.replace('observation.', '')}"] = next_video_frames[k]
+                item = {**video_frames, **item, **next_video_frames2}
 
-        if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
-            for cam in image_keys:
-                item[cam] = self.image_transforms(item[cam])
+            if self.image_transforms is not None:
+                image_keys = self.meta.camera_keys
+                for cam in image_keys:
+                    item[cam] = self.image_transforms(item[cam])
 
-        # Add task as a string
-        task_idx = item["task_index"].item()
-        item["task"] = self.meta.tasks[task_idx]
-        return item
+            # Add task as a string
+            task_idx = item["task_index"].item()
+            item["task"] = self.meta.tasks[task_idx]
+            return item
+        except:
+            return self.__getitem__(0)
 
     def __repr__(self):
         feature_keys = list(self.features)

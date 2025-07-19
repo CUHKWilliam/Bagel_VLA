@@ -131,8 +131,8 @@ def rollout(
     observation2 = observations[0]['robot0_eye_in_hand_image']
     raw_observation = {
         "pixels":{
-            "agentview_image": observation1,
-            "robot0_eye_in_hand_image": observation2,
+            "agentview_image": observation1[::-1, :, :].copy(),
+            "robot0_eye_in_hand_image": observation2[::-1, :, :].copy(),
         }
     }
 
@@ -200,8 +200,8 @@ def rollout(
 
         step += 1
         raw_observation['pixels'] = {
-            "agentview_image": new_observation['agentview_image'],
-            "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'],
+                "agentview_image": new_observation['agentview_image'][::-1, :, :].copy(),
+                "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'][::-1, :, :].copy(),
         }
     # Track the final observation.
     if return_observations:
@@ -494,6 +494,98 @@ def eval_main(cfg: EvalPipelineConfig):
     env.close()
 
     logging.info("End of eval")
+
+def validate_policy(
+    policy: PreTrainedPolicy,
+    batch,
+    start_seed: int | None = None,
+) -> dict:
+    """
+    Args:
+        env: The batch of environments.
+        policy: The policy.
+        n_episodes: The number of episodes to evaluate.
+        max_episodes_rendered: Maximum number of episodes to render into videos.
+        videos_dir: Where to save rendered videos.
+        return_episode_data: Whether to return episode data for online training. Incorporates the data into
+            the "episodes" key of the returned dictionary.
+        start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
+            seed is incremented by 1. If not provided, the environments are not manually seeded.
+    Returns:
+        Dictionary with metrics and data regarding the rollouts.
+    """
+
+    if not isinstance(policy, PreTrainedPolicy):
+        raise ValueError(
+            f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
+        )
+
+    policy.eval()
+    raw_observation = {
+        "pixels":{
+            "agentview_image": (batch['observation.images.image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+            "robot0_eye_in_hand_image": (batch['observation.images.wrist_image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+        }
+    }
+
+    observation_predicted_images = []
+    observation = preprocess_observation(raw_observation)
+    observation = {
+        key: observation[key].to(torch.cuda.current_device()).unsqueeze(0) for key in observation
+    }
+    observation['action'] = torch.zeros((1, 5, 7)) ## TODO: set action horizon
+    observation['task'] = batch['task']
+    with torch.inference_mode():
+        actions, predicted_images = policy.select_action(observation)
+    policy.train()
+    loss, output_dict = policy.forward(batch)
+    import ipdb;ipdb.set_trace()
+    return info
+
+
+def _compile_episode_data(
+    rollout_data: dict, done_indices: Tensor, start_episode_index: int, start_data_index: int, fps: float
+) -> dict:
+    """Convenience function for `eval_policy(return_episode_data=True)`
+
+    Compiles all the rollout data into a Hugging Face dataset.
+
+    Similar logic is implemented when datasets are pushed to hub (see: `push_to_hub`).
+    """
+    ep_dicts = []
+    total_frames = 0
+    for ep_ix in range(rollout_data["action"].shape[0]):
+        # + 2 to include the first done frame and the last observation frame.
+        num_frames = done_indices[ep_ix].item() + 2
+        total_frames += num_frames
+
+        # Here we do `num_frames - 1` as we don't want to include the last observation frame just yet.
+        ep_dict = {
+            "action": rollout_data["action"][ep_ix, : num_frames - 1],
+            "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
+            "frame_index": torch.arange(0, num_frames - 1, 1),
+            "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
+            "next.done": rollout_data["done"][ep_ix, : num_frames - 1],
+            "next.success": rollout_data["success"][ep_ix, : num_frames - 1],
+            "next.reward": rollout_data["reward"][ep_ix, : num_frames - 1].type(torch.float32),
+        }
+
+        # For the last observation frame, all other keys will just be copy padded.
+        for k in ep_dict:
+            ep_dict[k] = torch.cat([ep_dict[k], ep_dict[k][-1:]])
+
+        for key in rollout_data["observation"]:
+            ep_dict[key] = rollout_data["observation"][key][ep_ix, :num_frames]
+
+        ep_dicts.append(ep_dict)
+
+    data_dict = {}
+    for key in ep_dicts[0]:
+        data_dict[key] = torch.cat([x[key] for x in ep_dicts])
+
+    data_dict["index"] = torch.arange(start_data_index, start_data_index + total_frames, 1)
+
+    return data_dict
 
 
 if __name__ == "__main__":

@@ -321,7 +321,7 @@ class Bagel(PreTrainedModel):
 
         if self.config.action_gen:
             n_action_steps = self.config.n_action_steps
-            action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids[1:-1] - packed_action_position_ids[1])
+            action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids)
             packed_sequence[packed_action_token_indexes] = action_token_pos_emb
 
         extra_inputs = {}
@@ -1039,7 +1039,7 @@ class Bagel(PreTrainedModel):
             curr += 1
             _curr += 1
 
-            num_action_tokens = self.action_horizon * self.action_dim
+            num_action_tokens = self.action_horizon
             packed_action_token_indexes.extend(range(_curr, _curr + num_action_tokens))
             packed_query_indexes.extend(range(curr, curr + num_action_tokens))
             curr += num_action_tokens

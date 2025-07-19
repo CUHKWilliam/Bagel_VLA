@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=0 accelerate launch --config_file accelerate_config.yaml  lerobot/scripts/train.py --policy.path=lerobot/pi0 --dataset.repo_id libero_90_no_noops_lerobot_all,libero_90_no_noops_lerobot_debug
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --config_file accelerate_config.yaml  lerobot/scripts/train.py --policy.path=lerobot/pi0 --dataset.repo_id libero_90_no_noops_lerobot_all,libero_90_no_noops_lerobot_debug

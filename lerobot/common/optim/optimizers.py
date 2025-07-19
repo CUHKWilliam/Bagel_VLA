@@ -95,28 +95,11 @@ class SGDConfig(OptimizerConfig):
 
 
 def save_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> None:
-    state = optimizer.state_dict()
-    param_groups = state.pop("param_groups")
-    flat_state = flatten_dict(state)
-    save_file(flat_state, save_dir / OPTIMIZER_STATE)
-    write_json(param_groups, save_dir / OPTIMIZER_PARAM_GROUPS)
+    state = optimizer.optimizer.state_dict()
+    torch.save(state, save_dir / OPTIMIZER_STATE)
 
 
 def load_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> torch.optim.Optimizer:
-    current_state_dict = optimizer.state_dict()
-    flat_state = load_file(save_dir / OPTIMIZER_STATE)
-    state = unflatten_dict(flat_state)
-
-    if "state" in state.keys():
-        loaded_state_dict = {"state": {int(k): v for k, v in state["state"].items()}}
-    else:
-        loaded_state_dict = {"state": {}}
-
-    if "param_groups" in current_state_dict:
-        param_groups = deserialize_json_into_object(
-            save_dir / OPTIMIZER_PARAM_GROUPS, current_state_dict["param_groups"]
-        )
-        loaded_state_dict["param_groups"] = param_groups
-
+    loaded_state_dict = torch.load(save_dir / OPTIMIZER_PARAM_GROUPS)
     optimizer.load_state_dict(loaded_state_dict)
     return optimizer

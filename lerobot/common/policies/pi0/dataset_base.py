@@ -366,8 +366,9 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             if "action" in sample.keys():
                 actions = sample['action']
                 actions = actions[:, :self.action_horizon, :]
-                if actions.size(1) == 6:
-                    actions = torch.cat([actions, torch.zeros((actions.size(0), actions.size(1), 1))], dim=-1)
+                if actions.shape[1] < self.action_horizon:
+                    actions = np.concatenate([actions, np.zeros((actions.shape[0], self.action_horizon - actions.shape[1], actions.shape[2]))], axis=1)
+                assert actions.shape[1] == self.action_horizon
                 sample['action'] = actions
                 data = self._add_action(
                     data,
@@ -619,7 +620,6 @@ class PackedDataset:
                 curr_rope_id += curr_split_len
             elif item['type'] == "action":
                 action_tensor = sample['action'][0][0]
-                action_tensor = action_tensor.view(-1)
                 # add a <|startofaction|> token
                 sequence_status['packed_text_ids'].append(self.boa_token_id)
                 sequence_status['packed_text_indexes'].append(curr)
@@ -648,7 +648,7 @@ class PackedDataset:
 
                 # update sequence status
                 attn_modes.append("full")
-                sequence_status['packed_action_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
+                sequence_status['packed_action_position_ids'].extend(range(0, num_action_tokens))
                 sequence_status['packed_position_ids'].extend([curr_rope_id] * curr_split_len)
                 curr_rope_id += curr_split_len
                 
