@@ -1010,7 +1010,6 @@ class PI0FlowMatching(nn.Module):
             action_pred = action_pred.view(self.bagel_model.action_horizon, self.bagel_model.action_dim)
             action_pred[:, -1] = torch.sigmoid(action_pred[:, -1])
             action_gt = data_batch['packed_action_tokens']
-            action_gt[:, -1] = torch.sigmoid(action_gt[:, -1])
             action_mse = F.l1_loss(action_pred, action_gt, reduction="none")
         loss_dict = {}
         if self.bagel_model.config.action_gen:
