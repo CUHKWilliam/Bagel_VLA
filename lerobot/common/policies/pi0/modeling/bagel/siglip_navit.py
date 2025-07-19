@@ -95,7 +95,7 @@ class SiglipVisionConfig(_SiglipVisionConfig):
             layer_norm_eps=layer_norm_eps,
             attention_dropout=attention_dropout,
             **kwargs)
-        
+
         self.rope = rope
 
 
@@ -182,8 +182,8 @@ class SiglipVisionEmbeddings(nn.Module):
         self.patch_embedding = linear_patch_embedding
 
     def forward(
-        self, 
-        packed_pixel_values: torch.FloatTensor, 
+        self,
+        packed_pixel_values: torch.FloatTensor,
         packed_flattened_position_ids: torch.LongTensor
     ) -> torch.Tensor:
 
@@ -222,7 +222,7 @@ class SiglipFlashAttention2(SiglipAttention):
         value_states = value_states.view(total_q_len, self.num_heads, self.head_dim)
 
         if self.config.rope:
-            qh, qw = query_states[:, :, :self.head_dim // 2], query_states[:, :, self.head_dim // 2:] 
+            qh, qw = query_states[:, :, :self.head_dim // 2], query_states[:, :, self.head_dim // 2:]
             kh, kw = key_states[:, :, :self.head_dim // 2], key_states[:, :, self.head_dim // 2:]
             qh, kh = apply_rotary_pos_emb(qh, kh, cos_h, sin_h)
             qw, kw = apply_rotary_pos_emb(qw, kw, cos_w, sin_w)
@@ -238,8 +238,7 @@ class SiglipFlashAttention2(SiglipAttention):
             max_seqlen_q=max_seqlen,
             max_seqlen_k=max_seqlen,
             causal=False,
-        )
-        self.out_proj = self.out_proj.to(torch.bfloat16)
+        ).float()
         attn_output = self.out_proj(attn_output.reshape(total_q_len, -1))
         return attn_output
 
@@ -350,7 +349,7 @@ class SiglipVisionTransformer(nn.Module):
         max_seqlen: int,
     ) -> torch.Tensor:
         hidden_states = self.embeddings(
-            packed_pixel_values=packed_pixel_values, 
+            packed_pixel_values=packed_pixel_values,
             packed_flattened_position_ids=packed_flattened_position_ids
         )
 
@@ -364,7 +363,7 @@ class SiglipVisionTransformer(nn.Module):
             )
 
         last_hidden_state = self.encoder(
-            inputs_embeds=hidden_states, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, 
+            inputs_embeds=hidden_states, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen,
             **extra_inputs
         )
         last_hidden_state = self.post_layernorm(last_hidden_state)
