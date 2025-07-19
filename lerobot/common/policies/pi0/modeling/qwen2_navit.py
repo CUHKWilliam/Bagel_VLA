@@ -1153,5 +1153,4 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
             packed_vae_token_indexes=packed_vae_token_indexes,
             packed_text_indexes=packed_text_indexes,
         )
-
         return outputs

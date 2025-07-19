@@ -636,10 +636,10 @@ class PI0Policy(PreTrainedPolicy):
         queue is empty.
         """
         self.eval()
-        actions, predicted_images = self.model.sample_actions(batch)
+        actions, predicted_images, unpacked_latent = self.model.sample_actions(batch)
         # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
         # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-        return actions, predicted_images
+        return actions, predicted_images, unpacked_latent
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
@@ -1046,6 +1046,7 @@ class PI0FlowMatching(nn.Module):
             loss_dict["action_mse"] = torch.tensor(0).cuda()
             total_action_mse_tokens = torch.tensor(0).cuda()
         loss_dict['loss'] = loss.detach()
+        loss_dict['last_hidden_state'] = last_hidden_state.detach()
         return loss, loss_dict
 
     def generate_image(self, images, instruction, ):
@@ -1182,7 +1183,7 @@ class PI0FlowMatching(nn.Module):
         grasp_threshold = 0. ## TODO: set grasping threshold
         action_pred[action_pred[:, -1] > grasp_threshold][:, -1] = 1
         action_pred[action_pred[:, -1] <= grasp_threshold][:, -1] = 0
-        return action_pred, predict_images
+        return action_pred, predict_images, unpacked_latent
 
     def denoise_step(
         self,

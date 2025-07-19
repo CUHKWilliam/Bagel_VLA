@@ -173,6 +173,8 @@ class Qwen2Config(_Qwen2Config):
         freeze_und=False,
         **kwargs,
     ):
+        ## TODO:
+        num_hidden_layers = 3
         super().__init__(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -337,10 +339,7 @@ class PackedAttention(Qwen2Attention):
             seqlens = sum(query_lens) + sum(key_values_lens)
             merged_key_states = past_key_states.new_zeros((seqlens, self.num_key_value_heads, self.head_dim))
             merged_value_states = past_key_states.new_zeros((seqlens, self.num_key_value_heads, self.head_dim))
-            try:
-                merged_key_states[packed_query_indexes] = packed_key_states
-            except:
-                import ipdb;ipdb.set_trace()
+            merged_key_states[packed_query_indexes] = packed_key_states
             merged_key_states[packed_key_value_indexes] = past_key_states
             merged_value_states[packed_query_indexes] = packed_value_states
             merged_value_states[packed_key_value_indexes] = past_value_states
@@ -495,7 +494,6 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_attn_output_[packed_und_token_indexes] = self.o_proj(packed_attn_output[packed_und_token_indexes])
         if packed_gen_token_indexes is not None:
             packed_attn_output_[packed_gen_token_indexes] = self.o_proj_moe_gen(packed_attn_output[packed_gen_token_indexes])
-
         return packed_attn_output_
 
     def forward_inference(
@@ -513,7 +511,7 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_vae_token_indexes=None,
         packed_text_indexes=None,
     ):
-        if mode == 'und' or mode == "action":
+        if mode == 'und':
             packed_query_states = self.q_proj(packed_query_sequence).view(-1, self.num_heads, self.head_dim)
             packed_key_states = self.k_proj(packed_query_sequence).view(-1, self.num_key_value_heads, self.head_dim)
             packed_value_states = self.v_proj(packed_query_sequence).view(-1, self.num_key_value_heads, self.head_dim)
@@ -547,7 +545,25 @@ class PackedAttentionMoT(Qwen2Attention):
             packed_key_states = packed_key_states.to(torch.float32)
             packed_key_states[packed_text_indexes] = self.k_norm(packed_key_states[packed_text_indexes])
             packed_key_states[packed_vae_token_indexes] = self.k_norm_moe_gen(packed_key_states[packed_vae_token_indexes])
+        elif mode == "action":
+            packed_query_states = packed_query_sequence.new_zeros((packed_query_sequence.shape[0], self.num_heads * self.head_dim))
+            packed_key_states = packed_query_sequence.new_zeros((packed_query_sequence.shape[0], self.num_key_value_heads * self.head_dim))
+            packed_value_states = packed_query_sequence.new_zeros((packed_query_sequence.shape[0], self.num_key_value_heads * self.head_dim))
+            packed_text_query_sequence = packed_query_sequence[packed_text_indexes]
+            packed_query_states[packed_text_indexes] = self.q_proj(packed_text_query_sequence)
+            packed_key_states[packed_text_indexes] = self.k_proj(packed_text_query_sequence)
+            packed_value_states[packed_text_indexes] = self.v_proj(packed_text_query_sequence)
 
+            packed_query_states = packed_query_states.view(-1, self.num_heads, self.head_dim)
+            packed_key_states = packed_key_states.view(-1, self.num_key_value_heads, self.head_dim)
+            packed_value_states = packed_value_states.view(-1, self.num_key_value_heads, self.head_dim)
+
+            packed_query_states = packed_query_states.to(torch.float32)
+            packed_query_states[packed_text_indexes] = self.q_norm(packed_query_states[packed_text_indexes])
+
+            packed_key_states = packed_key_states.to(torch.float32)
+            packed_key_states[packed_text_indexes] = self.k_norm(packed_key_states[packed_text_indexes])
+        
         packed_cos, packed_sin = packed_query_position_embeddings
         packed_query_states, packed_key_states = apply_rotary_pos_emb(
             packed_query_states, packed_key_states, packed_cos, packed_sin, unsqueeze_dim=1
@@ -587,9 +603,11 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_attn_output = packed_attn_output.reshape(-1, self.hidden_size)
         if mode == 'und':
             packed_attn_output = self.o_proj(packed_attn_output)
-        elif mode == 'gen' or mode == "action":
+        elif mode == 'gen':
             packed_attn_output[packed_text_indexes] = self.o_proj(packed_attn_output[packed_text_indexes])
             packed_attn_output[packed_vae_token_indexes] = self.o_proj_moe_gen(packed_attn_output[packed_vae_token_indexes])
+        elif mode == "action":
+            packed_attn_output[packed_text_indexes] = self.o_proj(packed_attn_output[packed_text_indexes])
 
         if update_past_key_values:
             past_key_values.key_cache[self.layer_idx] = merged_key_states
@@ -1010,6 +1028,8 @@ class Qwen2MoTDecoderLayer(nn.Module):
         )
         if self.freeze_und:
             packed_sequence_[packed_und_token_indexes] = packed_sequence_[packed_und_token_indexes].detach()
+        if packed_action_token_indexes is not None:
+            packed_sequence_[packed_action_token_indexes] *= 0.
         packed_sequence = residual + packed_sequence_
 
         # Fully Connected
@@ -1024,6 +1044,8 @@ class Qwen2MoTDecoderLayer(nn.Module):
             packed_sequence_[packed_gen_token_indexes] = self.mlp_moe_gen(
                 self.post_attention_layernorm_moe_gen(packed_sequence[packed_gen_token_indexes])
             )
+        if packed_action_token_indexes is not None:
+            packed_sequence_[packed_action_token_indexes] *= 0.
         packed_sequence = residual + packed_sequence_
 
         return packed_sequence
@@ -1046,14 +1068,17 @@ class Qwen2MoTDecoderLayer(nn.Module):
     ) -> BaseNavitOutputWithPast:
 
         residual = packed_query_sequence
-        if mode == "und" or mode == "action":
+        if mode == "und":
             packed_query_sequence = self.input_layernorm(packed_query_sequence)
         elif mode == "gen":
             packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
             packed_query_sequence_[packed_text_indexes] = self.input_layernorm(packed_query_sequence[packed_text_indexes])
             packed_query_sequence_[packed_vae_token_indexes] = self.input_layernorm_moe_gen(packed_query_sequence[packed_vae_token_indexes])
             packed_query_sequence = packed_query_sequence_
-            
+        elif mode == "action":
+            packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
+            packed_query_sequence_[packed_text_indexes] = self.input_layernorm(packed_query_sequence[packed_text_indexes])
+            packed_query_sequence = packed_query_sequence_
         # Self Attention
         packed_query_sequence, past_key_values = self.self_attn(
             packed_query_sequence=packed_query_sequence,
@@ -1068,6 +1093,8 @@ class Qwen2MoTDecoderLayer(nn.Module):
             mode=mode,
             packed_text_indexes=packed_text_indexes,
         )
+        if mode == "action":
+            packed_query_sequence[packed_action_token_indexes] *= 0.
         packed_query_sequence = residual + packed_query_sequence
 
         # Fully Connected
@@ -1085,9 +1112,14 @@ class Qwen2MoTDecoderLayer(nn.Module):
             packed_query_sequence_[packed_vae_token_indexes] = self.mlp_moe_gen(packed_vae_query_sequence)
             packed_query_sequence = packed_query_sequence_
         elif mode == "action":
-            packed_query_sequence = self.post_attention_layernorm(packed_query_sequence)
-            packed_query_sequence = self.mlp(packed_query_sequence)
+            packed_text_query_sequence = packed_query_sequence[packed_text_indexes]
+            packed_text_query_sequence = self.post_attention_layernorm(packed_text_query_sequence)
+            packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
+            packed_query_sequence_[packed_text_indexes] = self.mlp(packed_text_query_sequence)
+            packed_query_sequence = packed_query_sequence_
 
+        if mode == "action":
+            packed_query_sequence[packed_action_token_indexes] *= 0.
         packed_query_sequence = residual + packed_query_sequence
         return packed_query_sequence, past_key_values
 
@@ -1410,7 +1442,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
         packed_gen_token_indexes: Optional[torch.LongTensor] = None,
         packed_action_token_indexes: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
-
         if self.config.freeze_und:
             packed_sequence[packed_und_token_indexes] = packed_sequence[packed_und_token_indexes].detach()
         # create position embeddings to be shared across the decoder layers
@@ -1446,7 +1477,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
             packed_sequence_[packed_gen_token_indexes] = self.norm_moe_gen(packed_sequence[packed_gen_token_indexes])
             if packed_action_token_indexes is not None:
                 packed_sequence_[packed_action_token_indexes] = self.norm_moe_gen2(packed_sequence[packed_action_token_indexes])
-
             return packed_sequence_
         else:
             return self.norm(packed_sequence)
@@ -1467,7 +1497,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
         packed_text_indexes=None,
         packed_action_token_indexes=None,
     ) -> BaseNavitOutputWithPast:
-
         # create position embeddings to be shared across the decoder layers
         cos, sin = self.rotary_emb(packed_query_sequence, packed_query_position_ids.unsqueeze(0))
         cos = cos.squeeze(0)
@@ -1488,7 +1517,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
                 assert packed_text_indexes is not None
                 assert packed_action_token_indexes is not None
                 extra_inputs.update(
-                    packed_vae_token_indexes=packed_vae_token_indexes,
                     packed_text_indexes=packed_text_indexes,
                     packed_action_token_indexes=packed_action_token_indexes
                 )
@@ -1631,5 +1659,4 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
             packed_text_indexes=packed_text_indexes,
             packed_action_token_indexes=packed_action_token_indexes,
         )
-
         return outputs

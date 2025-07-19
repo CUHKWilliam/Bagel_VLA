@@ -646,7 +646,7 @@ class PackedDataset:
 
                 # update sequence status
                 attn_modes.append("full")
-                sequence_status['packed_action_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
+                sequence_status['packed_action_position_ids'].extend(range(0, num_action_tokens))
                 sequence_status['packed_position_ids'].extend([curr_rope_id] * curr_split_len)
                 curr_rope_id += curr_split_len
                 

@@ -300,7 +300,6 @@ class Bagel(PreTrainedModel):
             vit_token_pos_emb = self.vit_pos_embed(packed_vit_position_ids)
             packed_vit_token_embed = packed_vit_token_embed + vit_token_pos_emb
             packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
-
         if self.config.visual_gen:
             p = self.latent_patch_size
             packed_latent = []
@@ -321,8 +320,9 @@ class Bagel(PreTrainedModel):
 
         if self.config.action_gen:
             n_action_steps = self.config.n_action_steps
-            action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids[1:-1] - packed_action_position_ids[1])
+            action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids)
             packed_sequence[packed_action_token_indexes] = action_token_pos_emb
+            import ipdb;ipdb.set_trace()
 
         extra_inputs = {}
         if self.use_moe:
@@ -341,6 +341,7 @@ class Bagel(PreTrainedModel):
             packed_position_ids=packed_position_ids,
             **extra_inputs,
         )
+        import ipdb;ipdb.set_trace()
 
         mse = None
         if self.config.visual_gen:
@@ -439,7 +440,6 @@ class Bagel(PreTrainedModel):
             packed_indexes.append(curr)
             curr += 1
             _curr += 1
-
             image_tensor = transforms(image)
             vit_position_ids = self.get_flattened_position_ids(
                 image_tensor.size(1), image_tensor.size(2), 
@@ -1159,9 +1159,8 @@ class Bagel(PreTrainedModel):
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
         n_action_steps = self.config.n_action_steps
-        action_token_pos_emb = self.latent_pos_embed(packed_query_position_ids[1:-1] - packed_query_position_ids[1])
+        action_token_pos_emb = self.latent_pos_embed(torch.tensor(range(0, len(packed_action_token_indexes))).long().cuda())
         packed_sequence[packed_action_token_indexes] = action_token_pos_emb
-        
         extra_inputs = {}
         if self.use_moe:
             extra_inputs = {
@@ -1182,6 +1181,7 @@ class Bagel(PreTrainedModel):
             is_causal=False,
             **extra_inputs,
         )
+        import ipdb;ipdb.set_trace()
         return output.packed_query_sequence
 
     # for evaluation
