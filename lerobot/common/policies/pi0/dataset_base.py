@@ -567,6 +567,7 @@ class PackedDataset:
         sequence_status = self.set_sequence_status()
         for i in range(len(sample)):
             a_sample = sample[i]
+            a_sample['action'] = a_sample['action'][0][i]
             sequence_status = self.pack_sequence(a_sample, sequence_status)
         sequence_status = self.to_tensor(sequence_status)
         return sequence_status
@@ -617,7 +618,7 @@ class PackedDataset:
                 sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
                 curr_rope_id += curr_split_len
             elif item['type'] == "action":
-                action_tensor = sample['action'][0][0]
+                action_tensor = sample['action']
                 # add a <|startofaction|> token
                 sequence_status['packed_text_ids'].append(self.boa_token_id)
                 sequence_status['packed_text_indexes'].append(curr)
