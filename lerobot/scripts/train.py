@@ -61,21 +61,15 @@ def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
     batch: Any,
-    optimizer: Optimizer,
     accelerator: Accelerator,
-    lr_scheduler=None,
 ) -> tuple[MetricsTracker, dict]:
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
     loss, output_dict = policy.forward(batch)
     policy.backward(loss)
-    try:
-        policy.step()
-    except:
-        print('step error')
-        pass
-    lr_scheduler.step() if lr_scheduler is not None else None
+    policy.step()
+    
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
     # grad_norm_value = accelerator.gather(grad_norm).mean().item()
@@ -103,7 +97,7 @@ def train(cfg: TrainPipelineConfig):
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
-        mixed_precision="fp16" if cfg.policy.use_amp else "no",
+        mixed_precision="no",
         gradient_accumulation_steps=cfg.policy.gradient_accumulation_steps,
         log_with="wandb" if cfg.wandb.enable else None,
         kwargs_handlers=[ddp_kwargs],
@@ -179,8 +173,8 @@ def train(cfg: TrainPipelineConfig):
             # step over the environment
             env_args = {
                 "bddl_file_name": task_bddl_file,
-                "camera_heights": 128,
-                "camera_widths": 128
+                "camera_heights": 256,
+                "camera_widths": 256
             }
             env = OffScreenRenderEnv(**env_args)
             env.seed(0)
@@ -225,6 +219,11 @@ def train(cfg: TrainPipelineConfig):
         pin_memory=False,
         drop_last=False,
     )
+    def get_model_param_count(model, trainable_only=False):
+        def numel(p):
+            return p.ds_numel
+        return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
+   
     # Prepare for distributed training
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, 
@@ -232,14 +231,11 @@ def train(cfg: TrainPipelineConfig):
         dataloader, 
         None,
     )
-    if cfg.resume:
-        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
-        step, optimizer, lr_scheduler = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
-
+ 
     # Log training info (only on main process)
     if accelerator.is_main_process:
-        num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
-        num_total_params = sum(p.numel() for p in policy.parameters())
+        num_learnable_params = get_model_param_count(policy, trainable_only=True)
+        num_total_params = get_model_param_count(policy, trainable_only=False)
 
         logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
         if cfg.env is not None:
@@ -253,6 +249,11 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"Device: {accelerator.device}")
         logging.info(f"Mixed precision: {accelerator.mixed_precision}")
 
+    if cfg.resume:
+        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+        step = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
+
+    
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f", accelerator),
         "grad_norm": AverageMeter("grdn", ":.3f", accelerator),
@@ -284,9 +285,7 @@ def train(cfg: TrainPipelineConfig):
                 train_tracker,
                 policy,
                 batch,
-                optimizer,
                 accelerator,
-                lr_scheduler=lr_scheduler,
             )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -338,9 +337,10 @@ def train(cfg: TrainPipelineConfig):
             unwrapped_policy.eval()
            
             ## validate performance 
+            '''
             dl_iter_val = iter(dataloader)
-            val_total_steps = 100
-            if accelerator.is_main_process:
+            val_total_steps = 1
+            if True:
                 for val_step in range(val_total_steps):
                     try:
                         batch = next(dl_iter)
@@ -352,6 +352,8 @@ def train(cfg: TrainPipelineConfig):
                             unwrapped_policy,
                             batch
                         )
+            '''
+
             process_index = accelerator.process_index
             num_processes = accelerator.num_processes
             local_eval_envs = eval_envs[accelerator.process_index::accelerator.num_processes] if accelerator.process_index in list(range(len(eval_envs))) else eval_envs
@@ -397,6 +399,9 @@ def train(cfg: TrainPipelineConfig):
             print("eval log dict done")
             if accelerator.is_main_process:
                 import ipdb;ipdb.set_trace()
+            else:
+                while True:
+                    pass
             policy.train()
     # Wait for all processes to finish
     accelerator.wait_for_everyone()
