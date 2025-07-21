@@ -564,14 +564,12 @@ class PackedDataset:
 
     def __call__(self, sample):
         sample = self.dataset(sample)
-        sample2 = []
+        sequence_status = self.set_sequence_status()
         for i in range(len(sample)):
             a_sample = sample[i]
-            sequence_status = self.set_sequence_status()
-            a_sample = self.pack_sequence(a_sample, sequence_status)
-            a_sample = self.to_tensor(a_sample)
-            sample2.append(a_sample)
-        return sample2
+            sequence_status = self.pack_sequence(a_sample, sequence_status)
+        sequence_status = self.to_tensor(sequence_status)
+        return sequence_status
 
     def pack_sequence(self, sample, sequence_status):
         image_tensor_list = sample['image_tensor_list']

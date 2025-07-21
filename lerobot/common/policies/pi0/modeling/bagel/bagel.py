@@ -274,8 +274,8 @@ class Bagel(PreTrainedModel):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros(size=(sequence_length, self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
-
         if nested_attention_masks is None:
+            import ipdb;ipdb.set_trace()
             sparse_mask = create_sparse_mask(sample_lens, split_lens, attn_modes, packed_text_embedding.device)
             seqlen = sum(sample_lens)
             block_mask = create_block_mask(
