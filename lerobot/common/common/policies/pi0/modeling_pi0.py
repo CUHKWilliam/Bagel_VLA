@@ -639,6 +639,7 @@ class PI0Policy(PreTrainedPolicy):
         actions, predicted_images = self.model.sample_actions(batch)
         # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
         # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+        actions = self.unnormalize_outputs({"action": actions})['action']
         return actions, predicted_images
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
@@ -647,7 +648,9 @@ class PI0Policy(PreTrainedPolicy):
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
+        batch = self.normalize_targets(batch)
         loss, loss_dict = self.model.forward(batch, actions, noise, time)
+        
         return loss, loss_dict
 
     def prepare_images(self, batch):
