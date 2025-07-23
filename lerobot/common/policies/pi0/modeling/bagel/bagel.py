@@ -1049,8 +1049,9 @@ class Bagel(PreTrainedModel):
             packed_query_indexes.append(curr)
             curr += 1
             _curr += 1
+            
 
-            packed_query_position_ids.extend([curr_position_id] * (num_action_tokens + 2))
+            packed_query_position_ids.extend(range(0, num_action_tokens + 2))
             packed_seqlens.append(num_action_tokens + 2)
             newlens.append(curr_kvlen + num_action_tokens + 2)
             new_rope.append(curr_position_id + 1)

@@ -1079,7 +1079,6 @@ class PI0FlowMatching(nn.Module):
             if "images." in key and "observation" in key:
                 observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
         observation_image = cv2.hconcat(observation_images)
-        
         # add images
         image = Image.fromarray(observation_image)
         generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
@@ -1190,7 +1189,7 @@ class PI0FlowMatching(nn.Module):
         action_pred = action_pred.view(self.bagel_model.action_horizon, -1)
         action_pred[:, -1] = torch.sigmoid(action_pred[:, -1])
         ## TODO: set gripper close thresh
-        gripper_thresh = 0.8
+        gripper_thresh = 0.98
         action_pred[:, -1][action_pred[:, -1] > gripper_thresh] = 1
         action_pred[:, -1][action_pred[:, -1] <= gripper_thresh] = 0
         return action_pred, predict_images
