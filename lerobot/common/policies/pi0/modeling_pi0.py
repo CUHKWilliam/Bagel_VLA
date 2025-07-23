@@ -122,13 +122,13 @@ class DataArguments:
         metadata={"help": "Number of background workers for the PyTorch DataLoader."}
     )
     max_num_tokens_per_sample: int = field(
-        # default=16384,
-        default=5000,
+        default=26384,
+        # default=5000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
-        # default=36864
-        default=10000,
+        default=66864,
+        # default=10000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -639,6 +639,7 @@ class PI0Policy(PreTrainedPolicy):
         actions, predicted_images = self.model.sample_actions(batch)
         # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
         # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+        actions = self.unnormalize_outputs({"action": actions})['action']
         return actions, predicted_images
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
@@ -647,7 +648,11 @@ class PI0Policy(PreTrainedPolicy):
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
+        action = batch['action'].clone()
+        batch = self.normalize_targets(batch)
+        batch['action'][..., -1] = action[..., -1].clone()
         loss, loss_dict = self.model.forward(batch, actions, noise, time)
+        
         return loss, loss_dict
 
     def prepare_images(self, batch):
@@ -855,17 +860,17 @@ class PI0FlowMatching(nn.Module):
                 if "_moe_gen2" not in name and "action" not in name:
                     param.requires_grad = False
 
-        # if training_args.freeze_vae and training_args.visual_gen:
-        #     for param in vae_model.parameters():
-        #         param.requires_grad = False
+        if training_args.freeze_vae and training_args.visual_gen:
+            for param in vae_model.parameters():
+                param.requires_grad = False
         # if training_args.freeze_llm:
         #     bagel_model.language_model.eval()
         #     for param in bagel_model.language_model.parameters():
         #         param.requires_grad = False
-        # if training_args.freeze_vit and training_args.visual_und:
-        #     bagel_model.vit_model.eval()
-        #     for param in bagel_model.vit_model.parameters():
-        #         param.requires_grad = False
+        if training_args.freeze_vit and training_args.visual_und:
+            bagel_model.vit_model.eval()
+            for param in bagel_model.vit_model.parameters():
+                 param.requires_grad = False
         self.bagel_model = bagel_model
         # Setup packed dataloader
         with open(data_args.dataset_config_file, "r") as stream:
@@ -928,9 +933,9 @@ class PI0FlowMatching(nn.Module):
         self, batch
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         datas = self.dataset(batch)
-        data_batch = SimpleCustomBatch(datas).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
         if training_args.visual_gen:
-            data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
             with torch.no_grad():
                 data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
 
@@ -1007,9 +1012,10 @@ class PI0FlowMatching(nn.Module):
         if self.bagel_model.config.action_gen:
             ## TODO: need to refine the code 
             action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])
-            action_pred = action_pred.view(self.bagel_model.action_horizon, self.bagel_model.action_dim)
+            action_pred = action_pred.view(-1, self.bagel_model.action_horizon, self.bagel_model.action_dim)
             action_gt = data_batch['packed_action_tokens']
-            action_pred[:, -1] = torch.sigmoid(action_pred[:, -1])
+            action_pred[:, :, -1] = torch.sigmoid(action_pred[:, :, -1])
+            action_pred = action_pred.view(-1, self.bagel_model.action_dim)
             action_mse = F.l1_loss(action_pred, action_gt, reduction="none")
         loss_dict = {}
         if self.bagel_model.config.action_gen:
@@ -1182,6 +1188,11 @@ class PI0FlowMatching(nn.Module):
         )
         action_pred = self.act_out_proj(unpacked_latent[1:-1])
         action_pred = action_pred.view(self.bagel_model.action_horizon, -1)
+        action_pred[:, -1] = torch.sigmoid(action_pred[:, -1])
+        ## TODO: set gripper close thresh
+        gripper_thresh = 0.8
+        action_pred[:, -1][action_pred[:, -1] > gripper_thresh] = 1
+        action_pred[:, -1][action_pred[:, -1] <= gripper_thresh] = 0
         return action_pred, predict_images
 
     def denoise_step(

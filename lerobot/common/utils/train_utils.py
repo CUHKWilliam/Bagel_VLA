@@ -123,10 +123,6 @@ def save_training_state(
     save_dir.mkdir(parents=True, exist_ok=True)
     save_training_step(train_step, save_dir)
     save_rng_state(save_dir)
-    if optimizer is not None:
-        save_optimizer_state(optimizer, save_dir)
-    if scheduler is not None:
-        save_scheduler_state(scheduler, save_dir)
 
 
 def load_training_state(
@@ -148,17 +144,14 @@ def load_training_state(
         tuple[int, Optimizer, LRScheduler | None]: training step, optimizer and scheduler with their
             state_dict loaded.
     """
+    
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     if not training_state_dir.is_dir():
-        raise NotADirectoryError(training_state_dir)
-
-    load_rng_state(training_state_dir)
-    step = load_training_step(training_state_dir)
-    # optimizer = load_optimizer_state(policy.optimizer, training_state_dir)
-    if scheduler is not None:
-        scheduler = load_scheduler_state(policy.scheduler, training_state_dir)
+        step = 3000
+    else:
+        step = load_training_step(training_state_dir)
     policy.load_checkpoint(checkpoint_dir / PRETRAINED_MODEL_DIR )
-    return step, optimizer, scheduler
+    return step
 
 
 # Copyright 2025 Bytedance Ltd. and/or its affiliates.

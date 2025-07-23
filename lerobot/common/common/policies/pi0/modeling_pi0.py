@@ -648,7 +648,9 @@ class PI0Policy(PreTrainedPolicy):
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
+        action = batch['action'].clone()
         batch = self.normalize_targets(batch)
+        batch['action'][..., -1] = action[..., -1].clone()
         loss, loss_dict = self.model.forward(batch, actions, noise, time)
         
         return loss, loss_dict
