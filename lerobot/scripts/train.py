@@ -221,7 +221,10 @@ def train(cfg: TrainPipelineConfig):
     )
     def get_model_param_count(model, trainable_only=False):
         def numel(p):
-            return p.ds_numel
+            try:
+                return p.ds_numel
+            except:
+                return 0
         return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
    
     # Prepare for distributed training

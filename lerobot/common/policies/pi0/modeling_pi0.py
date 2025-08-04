@@ -66,7 +66,7 @@ from lerobot.common.policies.pi0.paligemma_with_expert import (
 )
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import get_safe_dtype
-from lerobot.common.policies.pi0.dataset_base import PackedDatasetBagel, PackedDatasetPi0, SimpleCustomBatch
+from lerobot.common.policies.pi0.dataset_base import PackedDataset, SimpleCustomBatch
 from .modeling.qwen2 import Qwen2Tokenizer
 from .modeling.bagel.qwen2_navit import NaiveCache
 from lerobot.common.utils.data_utils import add_special_tokens
@@ -81,6 +81,7 @@ from lerobot.common.utils.fsdp_utils import (
     FSDPCheckpoint, FSDPConfig, grad_checkpoint_check_fn, fsdp_wrapper, 
     fsdp_ema_setup, fsdp_ema_update,
 )
+from lerobot.constants import ACTION, OBS_STATE
 import os
 from copy import deepcopy
 from lerobot.common.utils.train_utils import create_logger, get_latest_ckpt
@@ -234,113 +235,7 @@ class TrainingArguments:
         metadata={"help": "Train to generate action."}
     )
 
-    # --- bookkeeping & logging ---
-    results_dir: str = field(
-        default="results",
-        metadata={"help": "Root directory for logs."}
-    )
-    checkpoint_dir: str = field(
-        default="ckpts",
-        metadata={"help": "Root directory for model checkpoints."}
-    )
-    wandb_project: str = field(
-        default="bagel",
-        metadata={"help": "Weights & Biases project name."}
-    )
-    wandb_name: str = field(
-        default="run",
-        metadata={"help": "Name shown in the Weights & Biases UI for this run."}
-    )
-    wandb_runid: str = field(
-        default="0",
-        metadata={"help": "Unique identifier to resume a previous W&B run, if desired."}
-    )
-    wandb_resume: str = field(
-        default="allow",
-        metadata={"help": "W&B resume mode: 'allow', 'must', or 'never'."}
-    )
-    wandb_offline: bool = field(
-        default=False,
-        metadata={"help": "Run W&B in offline mode (logs locally, sync later)."}
-    )
-
-    # --- reproducibility & resume ---
-    global_seed: int = field(
-        default=4396,
-        metadata={"help": "Base random seed; actual seed is offset by rank for DDP."}
-    )
-    auto_resume: bool = field(
-        default=True,
-        metadata={"help": "Automatically pick up the latest checkpoint found in checkpoint_dir."}
-    )
-    resume_from: str = field(
-        default="/root/lerobot/weight/BAGEL-7B-MoT",
-        metadata={"help": "Explicit checkpoint path to resume from (overrides auto_resume)." }
-    )
-    resume_model_only: bool = field(
-        default=True,
-        metadata={"help": "Load only model weights, ignoring optimizer/scheduler states."}
-    )
-    finetune_from_ema: bool = field(
-        default=True,
-        metadata={"help": "When resume_model_only=True, load the EMA (exponential moving average) weights instead of raw weights."}
-    )
-    finetune_from_hf: bool = field(
-        default=True,
-        metadata={"help": "Whether finetune from HugginFace model."}
-    )
-
     # --- reporting frequency ---
-    log_every: int = field(
-        default=10,
-        metadata={"help": "Print / log every N training steps."}
-    )
-    save_every: int = field(
-        default=2000,
-        metadata={"help": "Save a checkpoint every N training steps."}
-    )
-    total_steps: int = field(
-        default=500_000,
-        metadata={"help": "Total number of optimizer steps to train for."}
-    )
-
-    # --- optimization & scheduler ---
-    warmup_steps: int = field(
-        default=2000,
-        metadata={"help": "Linear warm-up steps before applying the main LR schedule."}
-    )
-    lr_scheduler: str = field(
-        default="constant",
-        metadata={"help": "Type of LR schedule: 'constant' or 'cosine'."}
-    )
-    lr: float = field(
-        default=1e-4,
-        metadata={"help": "Peak learning rate after warm-up."}
-    )
-    min_lr: float = field(
-        default=1e-7,
-        metadata={"help": "Minimum learning rate for cosine schedule (ignored for constant)."}
-    )
-    beta1: float = field(
-        default=0.9,
-        metadata={"help": "AdamW β₁ coefficient."}
-    )
-    beta2: float = field(
-        default=0.95,
-        metadata={"help": "AdamW β₂ coefficient."}
-    )
-    eps: float = field(
-        default=1e-15,
-        metadata={"help": "AdamW ε for numerical stability."}
-    )
-    ema: float = field(
-        default=0.9999,
-        metadata={"help": "Decay rate for the exponential moving average of model weights."}
-    )
-    max_grad_norm: int = field(
-        default=1.0,
-        metadata={"help": "Gradient clipping threshold (L2 norm)."}
-    )
     timestep_shift: float = field(
         default=1.0,
         metadata={"help": "Shift applied to diffusion timestep indices (for latent prediction)."}
@@ -360,28 +255,6 @@ class TrainingArguments:
     expected_num_tokens: int = field(
         default=32768,
         metadata={"help": "Soft target token count; yield the batch once it reaches or exceeds this size."}
-    )
-
-    # --- distributed training / FSDP ---
-    num_replicate: int = field(
-        default=1,
-        metadata={"help": "Number of model replicas per GPU rank for tensor parallelism."}
-    )
-    num_shard: int = field(
-        default=8,
-        metadata={"help": "Number of parameter shards when using FSDP HYBRID_SHARD."}
-    )
-    sharding_strategy: str = field(
-        default="FULL_SHARD",
-        metadata={"help": "FSDP sharding strategy: FULL_SHARD, SHARD_GRAD_OP, HYBRID_SHARD, etc."}
-    )
-    backward_prefetch: str = field(
-        default="BACKWARD_PRE",
-        metadata={"help": "FSDP backward prefetch strategy (BACKWARD_PRE or NO_PREFETCH)."}
-    )
-    cpu_offload: bool = field(
-        default=True,
-        metadata={"help": "Enable FSDP parameter offload to CPU."}
     )
 
     # --- module freezing ---
@@ -766,57 +639,25 @@ class PI0FlowMatching(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-
-        if training_args.auto_resume:
-            resume_from = get_latest_ckpt(training_args.checkpoint_dir)
-            if resume_from is None:
-                resume_from = training_args.resume_from
-                resume_model_only = training_args.resume_model_only
-                if resume_model_only:
-                    finetune_from_ema = training_args.finetune_from_ema
-                else:
-                    finetune_from_ema = False
-            else:
-                resume_model_only = False
-                finetune_from_ema = False
-        else:
-            resume_from = training_args.resume_from
-            resume_model_only = training_args.resume_model_only
-            if resume_model_only:
-                finetune_from_ema = training_args.finetune_from_ema
-            else:
-                finetune_from_ema = False
-
-        if training_args.finetune_from_hf:
-            llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
-        else:
-            llm_config = Qwen2Config.from_pretrained(model_args.llm_path)
+        
+        llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
         llm_config.layer_module = model_args.layer_module
         llm_config.qk_norm = model_args.llm_qk_norm
         llm_config.tie_word_embeddings = model_args.tie_word_embeddings
         llm_config.freeze_und = training_args.freeze_und
-        if training_args.finetune_from_hf:
-            language_model = Qwen2ForCausalLM(llm_config)
-        else:
-            language_model = Qwen2ForCausalLM.from_pretrained(model_args.llm_path, config=llm_config)
+        language_model = Qwen2ForCausalLM(llm_config)
+        
         if training_args.copy_init_moe:
             language_model.init_moe()
 
         if training_args.visual_und:  
-            if training_args.finetune_from_hf:
-                vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
-            else:
-                vit_config = SiglipVisionConfig.from_pretrained(model_args.vit_path)
+            vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
             vit_config.num_hidden_layers = vit_config.num_hidden_layers + 1 + model_args.vit_select_layer
             vit_config.rope = model_args.vit_rope
-            if training_args.finetune_from_hf:
-                vit_model = SiglipVisionModel(vit_config)
-            else:
-                vit_model = SiglipVisionModel.from_pretrained(model_args.vit_path, config=vit_config)
+            vit_model = SiglipVisionModel(vit_config)
 
         vae_model, vae_config = load_ae(
             local_path=os.path.join(model_args.model_path, "ae.safetensors") 
-            if training_args.finetune_from_hf else model_args.vae_path
         )
         self.vae_model = vae_model
         self.vae_config = vae_config
@@ -846,7 +687,7 @@ class PI0FlowMatching(nn.Module):
         msg = bagel_model.load_state_dict(model_state_dict, strict=False)
         print(f"load Bagel: {msg}")
 
-        tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path if training_args.finetune_from_hf else model_args.llm_path)
+        tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path)
         tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
         self.new_token_ids = new_token_ids
         if num_new_tokens > 0:
@@ -874,9 +715,19 @@ class PI0FlowMatching(nn.Module):
         self.bagel_model = bagel_model
 
         ## config for pi0 model
-        pi0_model = PI0FlowMatching(self.config)
-        self.pi0_model = pi0_model
-        self.pi0_language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        paligemma_with_export_config = PaliGemmaWithExpertConfig(
+            freeze_vision_encoder=self.config.freeze_vision_encoder,
+            train_expert_only=self.config.train_expert_only,
+            attention_implementation=self.config.attention_implementation,
+        )
+        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config).to(torch.float32)
+        self.language_tokenizer_pi0 = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+
+        self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
+        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
+        self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
+        self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
+        self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
 
 
         # Setup packed dataloader
@@ -892,7 +743,7 @@ class PI0FlowMatching(nn.Module):
         dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
         dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
         dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
-        self.dataset = PackedDatase(
+        self.dataset = PackedDataset(
             dataset_config,
             tokenizer=tokenizer,
             special_tokens=new_token_ids,
@@ -911,9 +762,6 @@ class PI0FlowMatching(nn.Module):
         self.action_tokenizer = ActionTokenizer(
             tokenizer=tokenizer,
         )
-        self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        self.act_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.act_out_proj = nn.Linear(self.bagel_model.hidden_size, self.bagel_model.action_dim)
         self.set_requires_grad()
 
 
@@ -949,12 +797,57 @@ class PI0FlowMatching(nn.Module):
         if "packed_action_tokens" in data_batch.keys():
             with torch.no_grad():
                 data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
-
-        images, img_masks = self.prepare_images(data_batch)
-        state = self.prepare_state(data_batch)
-        lang_tokens, lang_masks = self.prepare_language(data_batch)
-        actions = self.prepare_action(data_batch)
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens, lang_masks = self.prepare_language(batch)
+        actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
+        embs = []
+        pad_masks = []
+        att_masks = []
+
+         # TODO: remove for loop
+        for (
+            img,
+            img_mask,
+        ) in zip(images, img_masks, strict=False):
+            img_emb = self.paligemma_with_expert.embed_image(img)
+
+            # Normalize image embeddings
+            img_emb_dim = img_emb.shape[-1]
+            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
+
+            bsize, num_img_embs = img_emb.shape[:2]
+            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
+
+            embs.append(img_emb)
+            pad_masks.append(img_mask)
+
+            # Create attention masks so that image tokens attend to each other
+            att_masks += [0] * num_img_embs
+
+        lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
+
+        # Normalize language embeddings
+        lang_emb_dim = lang_emb.shape[-1]
+        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+
+        embs.append(lang_emb)
+        pad_masks.append(lang_masks)
+
+        # full attention between image and language inputs
+        num_lang_embs = lang_emb.shape[1]
+        att_masks += [0] * num_lang_embs
+
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        return data_batch, embs, pad_masks, att_masks, state
+
+    def embed_suffix(self, state, noisy_actions, timestep):
+        """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
         embs = []
         pad_masks = []
         att_masks = []
@@ -970,7 +863,7 @@ class PI0FlowMatching(nn.Module):
         state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
         pad_masks.append(state_mask)
 
-        # Set attention masks so that image and language inputs do not attend to state or actions
+        # # Set attention masks so that image and language inputs do not attend to state or actions
         att_masks += [1]
 
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
@@ -1004,59 +897,6 @@ class PI0FlowMatching(nn.Module):
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return data_batch, embs, pad_masks, att_masks
-
-    def embed_suffix(self, noisy_actions, timestep):
-        """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
-        embs = []
-        pad_masks = []
-        att_masks = []
-
-        # Embed state
-        # state_emb = self.state_proj(state)
-        # state_emb = state_emb.to(dtype=torch.bfloat16)
-        # embs.append(state_emb[:, None, :])
-        # bsize = state_emb.shape[0]
-        # dtype = state_emb.dtype
-        # device = state_emb.device
-
-        # state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
-        # pad_masks.append(state_mask)
-
-        # # Set attention masks so that image and language inputs do not attend to state or actions
-        # att_masks += [1]
-
-        # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
-        time_emb = create_sinusoidal_pos_embedding(
-            timestep, self.config.proj_width, min_period=4e-3, max_period=4.0, device=device
-        )
-        time_emb = time_emb.type(dtype=dtype)
-
-        # Fuse timestep + action information using an MLP
-        action_emb = self.act_in_proj(noisy_actions)
-
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
-        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
-
-        action_time_emb = self.action_time_mlp_in(action_time_emb)
-        action_time_emb = F.silu(action_time_emb)  # swish == silu
-        action_time_emb = self.action_time_mlp_out(action_time_emb)
-
-        # Add to input tokens
-        embs.append(action_time_emb)
-
-        bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=device)
-        pad_masks.append(action_time_mask)
-
-        # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.n_action_steps - 1))
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
         return embs, pad_masks, att_masks
     
     def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
@@ -1067,7 +907,7 @@ class PI0FlowMatching(nn.Module):
         # PaliGemma prompt has to end with a new line
         tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
 
-        tokenized_prompt = self.language_tokenizer.__call__(
+        tokenized_prompt = self.language_tokenizer_pi0.__call__(
             tasks,
             padding="max_length",
             padding_side="right",
@@ -1084,7 +924,6 @@ class PI0FlowMatching(nn.Module):
         self, batch, actions, noise=None, time=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        import ipdb;ipdb.set_trace()
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -1095,8 +934,8 @@ class PI0FlowMatching(nn.Module):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        data_batch,  prefix_embs, prefix_pad_masks, prefix_att_masks  = self.embed_prefix(
-            batch
+        data_batch,  prefix_embs, prefix_pad_masks, prefix_att_masks, state  = self.embed_prefix(
+            batch, 
         )
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
 
@@ -1106,24 +945,32 @@ class PI0FlowMatching(nn.Module):
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
+        past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+        ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
+        mse = ret['mse']
+        ce = ret['ce']    
+        past_key_values = ret['past_key_values']
+
+        (_, suffix_out), _ = self.paligemma_with_expert.forward(
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, suffix_embs],
+            bagel_kv_cache=past_key_values,
+            use_cache=False,
+            fill_kv_cache=False,
+        )
+        suffix_out = suffix_out[:, -self.config.n_action_steps :]
+        # Original openpi code, upcast attention output
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        v_t = self.action_out_proj(suffix_out)
+        action_mse = F.mse_loss(u_t, v_t, reduction="none")
         ret = self.bagel_model(**data_batch,)
         mse = ret['mse']
         ce = ret['ce']
         last_hidden_state = ret['last_hidden_state']
         action_mse = None
-        if self.bagel_model.config.action_gen:
-            ## TODO: need to refine the code 
-            action_pred = self.act_out_proj(last_hidden_state[data_batch["action_loss_indexes"]])
-            action_pred = action_pred.view(-1, self.bagel_model.action_horizon, self.bagel_model.action_dim)
-            action_gt = data_batch['packed_action_tokens']
-            action_pred[:, :, -1] = torch.sigmoid(action_pred[:, :, -1])
-            action_pred = action_pred.view(-1, self.bagel_model.action_dim)
-            action_mse = F.l1_loss(action_pred, action_gt, reduction="none")
-        loss_dict = {}
-        if self.bagel_model.config.action_gen:
-            loss_dict['predict_action'] = action_pred
-            loss_dict['gt_action'] = data_batch["packed_action_tokens"]
-        loss = 0
+        
         if ce is not None:
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
             if training_args.ce_loss_reweighting:
@@ -1147,14 +994,9 @@ class PI0FlowMatching(nn.Module):
             loss_dict["mse"] = torch.tensor(0).cuda()
             total_mse_tokens = torch.tensor(0).cuda()
 
-        if self.bagel_model.config.action_gen:
-            total_action_tokens = torch.tensor(len(data_batch['action_loss_indexes'])).cuda()
-            action_mse_mean = action_mse.mean()
-            loss_dict["action_mse"] = action_mse_mean.detach()
-            loss = loss + action_mse_mean * self.bagel_model.config.action_mse_weight
-        else:
-            loss_dict["action_mse"] = torch.tensor(0).cuda()
-            total_action_mse_tokens = torch.tensor(0).cuda()
+        action_mse_mean = action_mse.mean()
+        loss_dict["action_mse"] = action_mse_mean.detach()
+        loss = loss + action_mse_mean * self.bagel_model.config.action_mse_weight
         loss_dict['loss'] = loss.detach()
         return loss, loss_dict
 
@@ -1332,3 +1174,85 @@ class PI0FlowMatching(nn.Module):
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         return v_t
+    
+    def prepare_images(self, batch):
+        """Apply Pi0 preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
+        convert pixel range from [0.0, 1.0] to [-1.0, 1.0] as requested by SigLIP.
+        """
+        images = []
+        img_masks = []
+
+        present_img_keys = [key for key in self.config.image_features if key in batch]
+        missing_img_keys = [key for key in self.config.image_features if key not in batch]
+
+        if len(present_img_keys) == 0:
+            raise ValueError(
+                f"All image features are missing from the batch. At least one expected. (batch: {batch.keys()}) (image_features:{self.config.image_features})"
+            )
+
+        # Preprocess image features present in the batch
+        for key in present_img_keys:
+            img = batch[key]
+
+            if self.config.resize_imgs_with_padding is not None:
+                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
+
+            # Normalize from range [0,1] to [-1,1] as expacted by siglip
+            img = img * 2.0 - 1.0
+
+            bsize = img.shape[0]
+            device = img.device
+            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            images.append(img)
+            img_masks.append(mask)
+
+        # Create image features not present in the batch
+        # as fully 0 padded images.
+        for num_empty_cameras in range(len(missing_img_keys)):
+            if num_empty_cameras >= self.config.empty_cameras:
+                break
+            img = torch.ones_like(img) * -1
+            mask = torch.zeros_like(mask)
+            images.append(img)
+            img_masks.append(mask)
+
+        return images, img_masks
+
+    def _pi_aloha_decode_state(self, state):
+        # Flip the joints.
+        for motor_idx in [1, 2, 8, 9]:
+            state[:, motor_idx] *= -1
+        # Reverse the gripper transformation that is being applied by the Aloha runtime.
+        for motor_idx in [6, 13]:
+            state[:, motor_idx] = aloha_gripper_to_angular(state[:, motor_idx])
+        return state
+
+    def _pi_aloha_encode_actions(self, actions):
+        # Flip the joints.
+        for motor_idx in [1, 2, 8, 9]:
+            actions[:, :, motor_idx] *= -1
+        # Reverse the gripper transformation that is being applied by the Aloha runtime.
+        for motor_idx in [6, 13]:
+            actions[:, :, motor_idx] = aloha_gripper_from_angular(actions[:, :, motor_idx])
+        return actions
+
+    def _pi_aloha_encode_actions_inv(self, actions):
+        # Flip the joints again.
+        for motor_idx in [1, 2, 8, 9]:
+            actions[:, :, motor_idx] *= -1
+        # Reverse the gripper transformation that is being applied by the Aloha runtime.
+        for motor_idx in [6, 13]:
+            actions[:, :, motor_idx] = aloha_gripper_from_angular_inv(actions[:, :, motor_idx])
+        return actions
+
+    def prepare_state(self, batch):
+        """Pad state"""
+        state = pad_vector(batch[OBS_ROBOT], self.config.max_state_dim)
+        return state
+
+    def prepare_action(self, batch):
+        """Pad action"""
+        actions = pad_vector(batch[ACTION], self.config.max_action_dim)
+        return actions
+
+

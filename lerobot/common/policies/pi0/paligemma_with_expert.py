@@ -91,7 +91,9 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 16384,
                     "model_type": "gemma",
                     "num_attention_heads": 8,
-                    "num_hidden_layers": 18,
+                    ## TODO:
+                    # "num_hidden_layers": 18,
+                    "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
@@ -102,7 +104,9 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 4304,
                     "model_type": "siglip_vision_model",
                     "num_attention_heads": 16,
-                    "num_hidden_layers": 27,
+                    # "num_hidden_layers": 27,
+                    ## TODO:
+                    "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "patch_size": 14,
                     "projection_dim": 2048,
@@ -135,7 +139,9 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 max_position_embeddings=8192,
                 model_type="gemma",
                 num_attention_heads=8,
-                num_hidden_layers=18,
+                ## TODO:
+                # num_hidden_layers=18,
+                num_hidden_layers=6,
                 num_key_value_heads=1,
                 pad_token_id=0,
                 rms_norm_eps=1e-06,
@@ -219,7 +225,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         return self.paligemma.get_image_features(image)
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.language_model.model.embed_tokens(tokens)
+        return self.paligemma.language_model.embed_tokens(tokens)
 
     # TODO: break down this huge forward into modules or functions
     def forward(
@@ -228,6 +234,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
         inputs_embeds: List[torch.FloatTensor] = None,
+        bagel_kv_cache = None,
         use_cache: Optional[bool] = None,
         fill_kv_cache: Optional[bool] = None,
     ):
@@ -267,6 +274,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 query_states.append(query_state)
                 key_states.append(key_state)
                 value_states.append(value_state)
+            import ipdb;ipdb.set_trace()
+            if bagel_kv_cache is not None:
+                import ipdb;ipdb.set_trace()
 
             # B,L,H,D with L sequence length, H number of heads, D head dim
             # concatenate on the number of embeddings/tokens

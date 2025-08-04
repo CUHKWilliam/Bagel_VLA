@@ -55,9 +55,9 @@ class BagelConfig(PretrainedConfig):
         self.interpolate_pos = interpolate_pos
         self.timestep_shift = timestep_shift
         ## TODO: from openpi zero, for action generation
-        self.n_action_steps = 5
+        self.n_action_steps = 50
         self.action_dim = 7
-        self.action_horizon = 5
+        self.action_horizon = 50
         self.max_action_dim = 32
         self.action_proj_width = 1024
         self.action_num_steps = 10
@@ -102,7 +102,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 16384,
                     "model_type": "gemma",
                     "num_attention_heads": 8,
-                    "num_hidden_layers": 18,
+                    # "num_hidden_layers": 18, ## TODO:
+                    "num_hidden_layers": 2,
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
@@ -113,7 +114,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 4304,
                     "model_type": "siglip_vision_model",
                     "num_attention_heads": 16,
-                    "num_hidden_layers": 27,
+                    # "num_hidden_layers": 27, ##TODO:
+                    "num_hidden_layers": 2,
                     "num_image_tokens": 256,
                     "patch_size": 14,
                     "projection_dim": 2048,
@@ -146,7 +148,7 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 max_position_embeddings=8192,
                 model_type="gemma",
                 num_attention_heads=8,
-                num_hidden_layers=18,
+                num_hidden_layers=2, ## TODO:
                 num_key_value_heads=1,
                 pad_token_id=0,
                 rms_norm_eps=1e-06,
@@ -178,6 +180,7 @@ class Bagel(PreTrainedModel):
         self.language_model = language_model
 
         self.hidden_size = config.llm_config.hidden_size
+        
         self.use_moe = "Mo" in config.llm_config.layer_module
         self.num_heads = config.llm_config.num_attention_heads
 
@@ -244,6 +247,7 @@ class Bagel(PreTrainedModel):
         packed_action_position_ids: Optional[torch.LongTensor] = None,
         packed_action_token_indexes: Optional[torch.LongTensor] = None,
         action_loss_indexes: Optional[torch.BoolTensor] = None,
+        past_key_values = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -333,11 +337,12 @@ class Bagel(PreTrainedModel):
                 packed_gen_token_indexes=packed_vae_token_indexes,
                 packed_action_token_indexes=packed_action_token_indexes,
             )
-        last_hidden_state = self.language_model(
+        last_hidden_state, past_key_values = self.language_model(
             packed_sequence=packed_sequence,
             sample_lens=sample_lens,
             attention_mask=attention_mask,
             packed_position_ids=packed_position_ids,
+            past_key_values=past_key_values,
             **extra_inputs,
         )
 
@@ -351,7 +356,7 @@ class Bagel(PreTrainedModel):
         if ce_loss_indexes is not None:
             packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
             ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
-        return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state)
+        return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state, past_key_values=past_key_values)
 
     def prepare_prompts(self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids):
         packed_text_ids = list()
