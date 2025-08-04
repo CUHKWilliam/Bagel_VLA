@@ -66,7 +66,7 @@ from lerobot.common.policies.pi0.paligemma_with_expert import (
 )
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.utils.utils import get_safe_dtype
-from lerobot.common.policies.pi0.dataset_base import PackedDataset, SimpleCustomBatch
+from lerobot.common.policies.pi0.dataset_base import PackedDatasetBagel, PackedDatasetPi0, SimpleCustomBatch
 from .modeling.qwen2 import Qwen2Tokenizer
 from .modeling.bagel.qwen2_navit import NaiveCache
 from lerobot.common.utils.data_utils import add_special_tokens
@@ -853,7 +853,7 @@ class PI0FlowMatching(nn.Module):
             bagel_model.language_model.resize_token_embeddings(len(tokenizer))
             bagel_model.config.llm_config.vocab_size = len(tokenizer)
             bagel_model.language_model.config.vocab_size = len(tokenizer)
-
+        
         # maybe freeze something:
         if training_args.action_gen:
             for name, param in bagel_model.named_parameters():
@@ -872,6 +872,13 @@ class PI0FlowMatching(nn.Module):
             for param in bagel_model.vit_model.parameters():
                  param.requires_grad = False
         self.bagel_model = bagel_model
+
+        ## config for pi0 model
+        pi0_model = PI0FlowMatching(self.config)
+        self.pi0_model = pi0_model
+        self.pi0_language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+
+
         # Setup packed dataloader
         with open(data_args.dataset_config_file, "r") as stream:
             dataset_meta = yaml.safe_load(stream)
@@ -885,7 +892,7 @@ class PI0FlowMatching(nn.Module):
         dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
         dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
         dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
-        self.dataset = PackedDataset(
+        self.dataset = PackedDatase(
             dataset_config,
             tokenizer=tokenizer,
             special_tokens=new_token_ids,
@@ -942,7 +949,62 @@ class PI0FlowMatching(nn.Module):
         if "packed_action_tokens" in data_batch.keys():
             with torch.no_grad():
                 data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
-        return data_batch
+
+        images, img_masks = self.prepare_images(data_batch)
+        state = self.prepare_state(data_batch)
+        lang_tokens, lang_masks = self.prepare_language(data_batch)
+        actions = self.prepare_action(data_batch)
+        actions_is_pad = batch.get("action_is_pad")
+        embs = []
+        pad_masks = []
+        att_masks = []
+
+        # Embed state
+        state_emb = self.state_proj(state)
+        state_emb = state_emb.to(dtype=torch.bfloat16)
+        embs.append(state_emb[:, None, :])
+        bsize = state_emb.shape[0]
+        dtype = state_emb.dtype
+        device = state_emb.device
+
+        state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
+        pad_masks.append(state_mask)
+
+        # Set attention masks so that image and language inputs do not attend to state or actions
+        att_masks += [1]
+
+        # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
+        time_emb = create_sinusoidal_pos_embedding(
+            timestep, self.config.proj_width, min_period=4e-3, max_period=4.0, device=device
+        )
+        time_emb = time_emb.type(dtype=dtype)
+
+        # Fuse timestep + action information using an MLP
+        action_emb = self.action_in_proj(noisy_actions)
+
+        time_emb = time_emb[:, None, :].expand_as(action_emb)
+        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+
+        action_time_emb = self.action_time_mlp_in(action_time_emb)
+        action_time_emb = F.silu(action_time_emb)  # swish == silu
+        action_time_emb = self.action_time_mlp_out(action_time_emb)
+
+        # Add to input tokens
+        embs.append(action_time_emb)
+
+        bsize, action_time_dim = action_time_emb.shape[:2]
+        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=device)
+        pad_masks.append(action_time_mask)
+
+        # Set attention masks so that image, language and state inputs do not attend to action tokens
+        att_masks += [1] + ([0] * (self.config.n_action_steps - 1))
+
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        return data_batch, embs, pad_masks, att_masks
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -996,14 +1058,54 @@ class PI0FlowMatching(nn.Module):
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
         return embs, pad_masks, att_masks
+    
+    def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
+        """Tokenize the text input"""
+        device = batch[OBS_STATE].device
+        tasks = batch["task"]
+
+        # PaliGemma prompt has to end with a new line
+        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
+
+        tokenized_prompt = self.language_tokenizer.__call__(
+            tasks,
+            padding="max_length",
+            padding_side="right",
+            max_length=self.config.tokenizer_max_length,
+            return_tensors="pt",
+        )
+        lang_tokens = tokenized_prompt["input_ids"].to(device=device)
+        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
+
+        return lang_tokens, lang_masks
+
 
     def forward(
         self, batch, actions, noise=None, time=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        data_batch = self.embed_prefix(
+        import ipdb;ipdb.set_trace()
+        if noise is None:
+            noise = self.sample_noise(actions.shape, actions.device)
+
+        if time is None:
+            time = self.sample_time(actions.shape[0], actions.device)
+
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        data_batch,  prefix_embs, prefix_pad_masks, prefix_att_masks  = self.embed_prefix(
             batch
         )
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
+
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+
         ret = self.bagel_model(**data_batch,)
         mse = ret['mse']
         ce = ret['ce']
