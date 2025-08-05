@@ -730,7 +730,6 @@ class PI0FlowMatching(nn.Module):
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
         self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
 
-
         # Setup packed dataloader
         with open(data_args.dataset_config_file, "r") as stream:
             dataset_meta = yaml.safe_load(stream)
@@ -1198,6 +1197,7 @@ class PI0FlowMatching(nn.Module):
             use_cache=self.config.use_cache,
             fill_kv_cache=False,
         )
+
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         suffix_out = suffix_out.to(dtype=torch.float32)

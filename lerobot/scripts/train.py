@@ -310,9 +310,9 @@ def train(cfg: TrainPipelineConfig):
                         observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
                 observation_image = cv2.hconcat(observation_images)
                 wandb_log_dict.update({"observation": [observation_image]})
-                predict_action = str(output_dict['predict_action'].view(-1).tolist())
-                gt_action = str(output_dict['gt_action'].tolist())
-                wandb_log_dict.update({"action": [{"gt_action": gt_action, "predicted_action": predict_action}]})
+                # predict_action = str(output_dict['predict_action'].view(-1).tolist())
+                # gt_action = str(output_dict['gt_action'].tolist())
+                # wandb_log_dict.update({"action": [{"gt_action": gt_action, "predicted_action": predict_action}]})
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
         
