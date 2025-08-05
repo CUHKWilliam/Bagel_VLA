@@ -412,7 +412,7 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         packed_und_token_indexes: torch.LongTensor,
         packed_gen_token_indexes: torch.LongTensor | None,
-        pask_key_values = None,
+        past_key_values = None,
     ):
         packed_query_states = packed_sequence.new_zeros((packed_sequence.shape[0], self.num_heads * self.head_dim))
         packed_key_states = packed_sequence.new_zeros((packed_sequence.shape[0], self.num_key_value_heads * self.head_dim))
@@ -460,7 +460,6 @@ class PackedAttentionMoT(Qwen2Attention):
             packed_query_states_, packed_key_states_, packed_cos, packed_sin, unsqueeze_dim=1
         )
         if past_key_values is not None:
-            assert packed_query_indexes is not None
             merged_key_states = packed_key_states.clone()
             merged_value_states = packed_value_states.clone()
             past_key_values.key_cache[self.layer_idx] = merged_key_states
@@ -508,7 +507,7 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_attn_output_[packed_und_token_indexes] = self.o_proj(packed_attn_output[packed_und_token_indexes])
         if packed_gen_token_indexes is not None:
             packed_attn_output_[packed_gen_token_indexes] = self.o_proj_moe_gen(packed_attn_output[packed_gen_token_indexes])
-        return packed_attn_output_
+        return packed_attn_output_, past_key_values
 
     def forward_inference(
         self,

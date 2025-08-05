@@ -224,7 +224,7 @@ def train(cfg: TrainPipelineConfig):
             try:
                 return p.ds_numel
             except:
-                return 0
+                return p.numel()
         return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
    
     # Prepare for distributed training

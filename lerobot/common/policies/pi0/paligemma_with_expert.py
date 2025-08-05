@@ -92,8 +92,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "model_type": "gemma",
                     "num_attention_heads": 8,
                     ## TODO:
-                    # "num_hidden_layers": 18,
-                    "num_hidden_layers": 6,
+                    "num_hidden_layers": 18,
+                    # "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
@@ -104,9 +104,9 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 4304,
                     "model_type": "siglip_vision_model",
                     "num_attention_heads": 16,
-                    # "num_hidden_layers": 27,
+                    "num_hidden_layers": 27,
                     ## TODO:
-                    "num_hidden_layers": 6,
+                    # "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "patch_size": 14,
                     "projection_dim": 2048,
@@ -140,8 +140,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 model_type="gemma",
                 num_attention_heads=8,
                 ## TODO:
-                # num_hidden_layers=18,
-                num_hidden_layers=6,
+                num_hidden_layers=18,
+                # num_hidden_layers=6,
                 num_key_value_heads=1,
                 pad_token_id=0,
                 rms_norm_eps=1e-06,
@@ -237,8 +237,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         bagel_kv_cache = None,
         use_cache: Optional[bool] = None,
         fill_kv_cache: Optional[bool] = None,
+        bagel_sample_lens = None,
     ):
-        models = [self.paligemma.language_model.model, self.gemma_expert.model]
+        models = [self.paligemma.language_model, self.gemma_expert.model]
 
         for hidden_states in inputs_embeds:
             # TODO this is very inefficient
@@ -266,7 +267,6 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 input_shape = hidden_states.shape[:-1]
                 hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
 
-                hidden_states = hidden_states.to(dtype=torch.bfloat16)
                 query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape)
                 key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape)
                 value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape)
@@ -274,10 +274,30 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 query_states.append(query_state)
                 key_states.append(key_state)
                 value_states.append(value_state)
-            import ipdb;ipdb.set_trace()
             if bagel_kv_cache is not None:
-                import ipdb;ipdb.set_trace()
-
+                batch_bagel_key_state = []
+                batch_bagel_query_state = []
+                batch_bagel_value_state = []
+                batch_bagel_position_ids = []
+                curr_len  = 0 
+                max_sample_len = max(bagel_sample_lens[:-1])
+                for batch_id in range(len(bagel_sample_lens) - 1):
+                    bagel_key_state = bagel_kv_cache.key_cache[layer_idx][curr_len: curr_len + bagel_sample_lens[batch_id]]
+                    bagel_query_state = bagel_kv_cache.key_cache[layer_idx][curr_len: curr_len + bagel_sample_lens[batch_id]]
+                    bagel_value_state = bagel_kv_cache.value_cache[layer_idx][curr_len: curr_len + bagel_sample_lens[batch_id]]
+                    seq_len, num_heads, feat_dim = bagel_key_state.size()
+                    bagel_key_state = bagel_key_state.view(seq_len, num_heads // 2, feat_dim * 2).mean(1)[:, None, :]
+                    bagel_query_state = bagel_query_state.view(seq_len, num_heads // 2, feat_dim * 2).repeat((1, 4, 1)) * 0
+                    bagel_value_state = bagel_value_state.view(seq_len, num_heads // 2, feat_dim * 2).mean(1)[:, None, :]
+                    
+                    batch_bagel_key_state.append(bagel_key_state)
+                    batch_bagel_query_state.append(bagel_query_state)
+                    batch_bagel_value_state.append(bagel_value_state)
+                    curr_len += bagel_sample_lens[batch_id]
+                batch_bagel_key_state, batch_bagel_query_state, batch_bagel_value_state = torch.stack(batch_bagel_key_state, dim=0), torch.stack(batch_bagel_query_state, dim=0), torch.stack(batch_bagel_value_state, dim=0)
+                query_states = [batch_bagel_query_state] + query_states
+                key_states = [batch_bagel_key_state] + key_states
+                value_states = [batch_bagel_value_state] + value_states
             # B,L,H,D with L sequence length, H number of heads, D head dim
             # concatenate on the number of embeddings/tokens
             query_states = torch.cat(query_states, dim=1)
@@ -308,10 +328,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
             attention_interface = self.get_attention_interface()
             att_output = attention_interface(
-                attention_mask, batch_size, head_dim, query_states, key_states, value_states
+                attention_mask.bool(), batch_size, head_dim, query_states, key_states, value_states
             )
-            att_output = att_output.to(dtype=torch.bfloat16)
-
+            
             # first part of att_output is prefix (up to sequence length, [:, 0:prefix_seq_len])
             outputs_embeds = []
             start = 0
@@ -355,7 +374,6 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 outputs_embeds.append(out_emb)
             else:
                 outputs_embeds.append(None)
-
         return outputs_embeds, past_key_values
 
     def get_attention_interface(self):

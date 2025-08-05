@@ -490,7 +490,6 @@ class PI0Policy(PreTrainedPolicy):
         )
 
         self.model = PI0FlowMatching(config)
-
         self.reset()
 
     def reset(self):
@@ -659,7 +658,6 @@ class PI0FlowMatching(nn.Module):
         vae_model, vae_config = load_ae(
             local_path=os.path.join(model_args.model_path, "ae.safetensors") 
         )
-        self.vae_model = vae_model
         self.vae_config = vae_config
 
         self.bagel_config = BagelConfig(
@@ -704,6 +702,7 @@ class PI0FlowMatching(nn.Module):
         if training_args.freeze_vae and training_args.visual_gen:
             for param in vae_model.parameters():
                 param.requires_grad = False
+        self.vae_model = vae_model
         # if training_args.freeze_llm:
         #     bagel_model.language_model.eval()
         #     for param in bagel_model.language_model.parameters():
@@ -712,7 +711,9 @@ class PI0FlowMatching(nn.Module):
             bagel_model.vit_model.eval()
             for param in bagel_model.vit_model.parameters():
                  param.requires_grad = False
-        self.bagel_model = bagel_model
+        
+
+        self.bagel_model = bagel_model 
 
         ## config for pi0 model
         paligemma_with_export_config = PaliGemmaWithExpertConfig(
@@ -720,9 +721,9 @@ class PI0FlowMatching(nn.Module):
             train_expert_only=self.config.train_expert_only,
             attention_implementation=self.config.attention_implementation,
         )
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config).to(torch.float32)
+        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config).to(torch.float32).cuda()
         self.language_tokenizer_pi0 = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
-
+            
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
         self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
@@ -763,6 +764,9 @@ class PI0FlowMatching(nn.Module):
             tokenizer=tokenizer,
         )
         self.set_requires_grad()
+        
+        ##TODO:
+        self.merge_bagel = False
 
 
     def set_requires_grad(self):
@@ -938,18 +942,43 @@ class PI0FlowMatching(nn.Module):
             batch, 
         )
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
-
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        
+        if self.merge_bagel:
+            past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+            ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
+    
+            sample_lens = data_batch['sample_lens'][:-1]
+            max_sample_lens = max(sample_lens)
+            bagel_pad_masks = []
+            bagel_att_masks = []
+            for batch_id in range(len(sample_lens)):
+                bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
+                bagel_pad_mask[sample_lens[batch_id]:] = 0
+                bagel_pad_masks.append(bagel_pad_mask)
+                bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
+                bagel_att_masks.append(bagel_att_mask)
+            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
+            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+        
+            pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
+            att_masks = torch.cat([bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
+        else:
+            pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+            att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        if self.merge_bagel:
+            for batch_id in range(len(sample_lens)):
+                att_2d_masks[batch_id][:sample_lens[batch_id], :sample_lens[batch_id]] = 0
+
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
-        past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
-        ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
-        mse = ret['mse']
-        ce = ret['ce']    
-        past_key_values = ret['past_key_values']
+        if self.merge_bagel:
+            past_key_values = ret['past_key_values']
+            bagel_sample_lens = data_batch['sample_lens']
+        else:
+            past_key_values = None
+            bagel_sample_lens = None
 
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks,
@@ -959,18 +988,18 @@ class PI0FlowMatching(nn.Module):
             bagel_kv_cache=past_key_values,
             use_cache=False,
             fill_kv_cache=False,
+            bagel_sample_lens=bagel_sample_lens
         )
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         # Original openpi code, upcast attention output
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         action_mse = F.mse_loss(u_t, v_t, reduction="none")
-        ret = self.bagel_model(**data_batch,)
-        mse = ret['mse']
-        ce = ret['ce']
-        last_hidden_state = ret['last_hidden_state']
-        action_mse = None
         
+        ## TODO:
+        ce = None
+        loss_dict = {} 
+        loss = torch.tensor(0).float().cuda()
         if ce is not None:
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
             if training_args.ce_loss_reweighting:
@@ -996,7 +1025,7 @@ class PI0FlowMatching(nn.Module):
 
         action_mse_mean = action_mse.mean()
         loss_dict["action_mse"] = action_mse_mean.detach()
-        loss = loss + action_mse_mean * self.bagel_model.config.action_mse_weight
+        loss = loss + action_mse_mean
         loss_dict['loss'] = loss.detach()
         return loss, loss_dict
 
