@@ -567,7 +567,6 @@ class PackedDataset:
         sequence_status = self.set_sequence_status()
         for i in range(len(sample)):
             a_sample = sample[i]
-            a_sample['action'] = a_sample['action'][0][i]
             sequence_status = self.pack_sequence(a_sample, sequence_status)
         sequence_status = self.to_tensor(sequence_status)
         return sequence_status
@@ -617,40 +616,7 @@ class PackedDataset:
                 attn_modes.append("causal")
                 sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
                 curr_rope_id += curr_split_len
-            elif item['type'] == "action":
-                action_tensor = sample['action']
-                # add a <|startofaction|> token
-                sequence_status['packed_text_ids'].append(self.boa_token_id)
-                sequence_status['packed_text_indexes'].append(curr)
-                curr += 1
-                curr_split_len += 1
-
-                num_action_tokens = len(action_tensor)
-                sequence_status['packed_action_tokens'].append(action_tensor) ## TODO: formatting
-                sequence_status['packed_action_token_indexes'].extend(range(curr, curr + num_action_tokens))
-                sequence_status['action_loss_indexes'].extend(range(curr, curr + num_action_tokens))
-                sequence_status['action_loss_weights'].extend(
-                    [len2weight(num_action_tokens)] * num_action_tokens
-                )
-                curr += num_action_tokens
-                curr_split_len += num_action_tokens
-
-                # add a <|endofaction|> token
-                sequence_status['packed_text_ids'].append(self.eoa_token_id)
-                sequence_status['packed_text_indexes'].append(curr)
-                if item['special_token_loss'] == 1: # <|im_end|> may have loss
-                    sequence_status['action_loss_indexes'].append(curr)
-                    sequence_status['action_loss_weights'].append(1.0)
-                    sequence_status['packed_label_ids'].append(item['special_token_label'])
-                curr += 1
-                curr_split_len += 1
-
-                # update sequence status
-                attn_modes.append("full")
-                sequence_status['packed_action_position_ids'].extend(range(0, num_action_tokens))
-                sequence_status['packed_position_ids'].extend([curr_rope_id] * curr_split_len)
-                curr_rope_id += curr_split_len
-                
+            
             elif item['type'] == 'vit_image':
                 image_tensor = image_tensor_list.pop(0)
 
@@ -810,12 +776,6 @@ class SimpleCustomBatch:
             self.ce_loss_indexes = data["ce_loss_indexes"]
             self.ce_loss_weights = data["ce_loss_weights"]
 
-        if "packed_action_tokens" in data.keys():
-            self.packed_action_tokens = data["packed_action_tokens"]
-            self.packed_action_position_ids = data["packed_action_position_ids"]
-            self.packed_action_token_indexes = data["packed_action_token_indexes"]
-            self.action_loss_indexes = data["action_loss_indexes"]
-
     def pin_memory(self):
         self.packed_text_ids = self.packed_text_ids.pin_memory()
         self.packed_text_indexes = self.packed_text_indexes.pin_memory()
@@ -843,12 +803,6 @@ class SimpleCustomBatch:
             self.packed_label_ids = self.packed_label_ids.pin_memory()
             self.ce_loss_indexes = self.ce_loss_indexes.pin_memory()
             self.ce_loss_weights = self.ce_loss_weights.pin_memory()
-
-        if hasattr(self, "packed_action_tokens"):
-            self.packed_action_tokens = self.packed_action_tokens.pin_memory()
-            self.packed_action_position_ids = self.packed_action_position_ids.pin_memory()
-            self.packed_action_token_indexes = self.packed_action_token_indexes.pin_memory()
-            self.action_loss_indexes = self.action_loss_indexes.pin_memory()
 
         return self
 
@@ -880,12 +834,6 @@ class SimpleCustomBatch:
             self.ce_loss_indexes = self.ce_loss_indexes.to(device)
             self.ce_loss_weights = self.ce_loss_weights.to(device)
         
-        if hasattr(self, 'packed_action_tokens'):
-            self.packed_action_tokens = self.packed_action_tokens.to(device)
-            self.packed_action_position_ids = self.packed_action_position_ids.to(device)
-            self.packed_action_token_indexes = self.packed_action_token_indexes.to(device)
-            self.action_loss_indexes = self.action_loss_indexes.to(device)
-
         return self
 
     def to_dict(self):
@@ -915,12 +863,6 @@ class SimpleCustomBatch:
             data['packed_vit_token_indexes'] = self.packed_vit_token_indexes
             data['vit_token_seqlens'] = self.vit_token_seqlens
         
-        if hasattr(self, 'packed_action_tokens'):
-            data['packed_action_tokens'] = self.packed_action_tokens
-            data['packed_action_position_ids'] = self.packed_action_position_ids
-            data['packed_action_token_indexes'] = self.packed_action_token_indexes
-            data['action_loss_indexes'] = self.action_loss_indexes
-
         if hasattr(self, 'packed_timesteps'):
             data['packed_timesteps'] = self.packed_timesteps
             data['mse_loss_indexes'] = self.mse_loss_indexes

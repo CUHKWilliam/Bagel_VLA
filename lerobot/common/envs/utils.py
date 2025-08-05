@@ -65,7 +65,10 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
         return_observations["observation.environment_state"] = torch.from_numpy(
             observations["environment_state"]
         ).float()
-
+    if "state" in observations:
+        return_observations["observation.state"] = torch.from_numpy(
+            observations["state"]
+        ).float()
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     # requirement for "agent_pos"
     # return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()

@@ -131,9 +131,10 @@ def rollout(
     observation2 = observations[0]['robot0_eye_in_hand_image']
     raw_observation = {
         "pixels":{
-            "agentview_image": observation1[::-1, :, :].copy(),
-            "robot0_eye_in_hand_image": observation2[::-1, :, :].copy(),
-        }
+            "image": observation1[::-1, :, :].copy(),
+            "wrist_image": observation2[::-1, :, :].copy(),
+        },
+        "state": np.concatenate([observations[0]['robot0_joint_pos'], -observations[0]['robot0_joint_pos'][-1:]], axis=0)
     }
 
     if render_callback is not None:
@@ -160,14 +161,13 @@ def rollout(
         observation = {
             key: observation[key].to(device, non_blocking=device.type == "cuda").unsqueeze(0) for key in observation
         }
-        observation['action'] = torch.zeros((1, 5, 7)) ## TODO: set action horizon
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         # observation = add_envs_task(env, observation)
         observation['task'] = [env.language_instruction]
         with torch.inference_mode():
             actions, predicted_images = policy.select_action(observation)
-        observation_image = cv2.hconcat([raw_observation['pixels']['agentview_image'], raw_observation['pixels']['robot0_eye_in_hand_image']])
+        observation_image = cv2.hconcat([raw_observation['pixels']['image'], raw_observation['pixels']['wrist_image']])
         if predicted_images is not None:
             observation_predicted_image = cv2.vconcat([observation_image, np.asarray(predicted_images[0])])
         else:
@@ -192,7 +192,7 @@ def rollout(
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
         successes = success
-
+        reward = int(success)
         all_actions.append(torch.from_numpy(action))
         all_rewards.append(torch.from_numpy(np.array(reward)))
         all_dones.append(torch.from_numpy(np.array(done)))
@@ -200,9 +200,11 @@ def rollout(
 
         step += 1
         raw_observation['pixels'] = {
-                "agentview_image": new_observation['agentview_image'][::-1, :, :].copy(),
-                "robot0_eye_in_hand_image": new_observation['robot0_eye_in_hand_image'][::-1, :, :].copy(),
+                "image": new_observation['agentview_image'][::-1, :, :].copy(),
+                "wrist_image": new_observation['robot0_eye_in_hand_image'][::-1, :, :].copy(),
         }
+        raw_observation['state'] = np.concatenate([new_observation['robot0_joint_pos'], -new_observation['robot0_joint_pos'][-1:]], axis=0)
+
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)
