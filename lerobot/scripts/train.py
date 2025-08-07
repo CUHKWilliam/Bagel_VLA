@@ -339,8 +339,6 @@ def train(cfg: TrainPipelineConfig):
             unwrapped_policy = accelerator.unwrap_model(policy)
             unwrapped_policy.eval()
            
-            ## validate performance 
-            '''
             dl_iter_val = iter(dataloader)
             val_total_steps = 1
             if True:
@@ -355,7 +353,6 @@ def train(cfg: TrainPipelineConfig):
                             unwrapped_policy,
                             batch
                         )
-            '''
 
             process_index = accelerator.process_index
             num_processes = accelerator.num_processes

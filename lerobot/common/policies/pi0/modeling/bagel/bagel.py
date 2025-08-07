@@ -101,8 +101,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "hidden_size": 2048,
                     "intermediate_size": 16384,
                     "model_type": "gemma",
-                    # "num_attention_heads": 8,
-                    "num_hidden_layers": 18, ## TODO:
+                    "num_attention_heads": 8,
+                    # "num_hidden_layers": 18, ## TODO:
                     "num_hidden_layers": 2,
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
@@ -114,8 +114,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 4304,
                     "model_type": "siglip_vision_model",
                     "num_attention_heads": 16,
-                    "num_hidden_layers": 27, ##TODO:
-                    # "num_hidden_layers": 2,
+                    # "num_hidden_layers": 27, ##TODO:
+                    "num_hidden_layers": 2,
                     "num_image_tokens": 256,
                     "patch_size": 14,
                     "projection_dim": 2048,
@@ -322,10 +322,6 @@ class Bagel(PreTrainedModel):
             packed_latent = self.vae2llm(packed_latent) + packed_timestep_embeds + latent_token_pos_emb
             packed_sequence[packed_vae_token_indexes] = packed_latent
 
-        if self.config.action_gen:
-            n_action_steps = self.config.n_action_steps
-            action_token_pos_emb = self.latent_pos_embed(packed_action_position_ids)
-            packed_sequence[packed_action_token_indexes] = action_token_pos_emb
 
         extra_inputs = {}
         if self.use_moe:

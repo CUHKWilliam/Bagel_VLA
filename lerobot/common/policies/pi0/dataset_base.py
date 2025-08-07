@@ -363,18 +363,6 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     need_vae=True, 
                     need_vit=False, 
                 )
-            if "action" in sample.keys():
-                actions = sample['action']
-                actions = actions[:, :self.action_horizon, :]
-                if actions.shape[1] < self.action_horizon:
-                    actions = np.concatenate([actions, np.zeros((actions.shape[0], self.action_horizon - actions.shape[1], actions.shape[2]))], axis=1)
-                assert actions.shape[1] == self.action_horizon
-                sample['action'] = actions
-                data = self._add_action(
-                    data,
-                    sample['action'],
-                    need_loss=True,
-                )
             datas.append(data)
         return datas
     

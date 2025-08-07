@@ -92,8 +92,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "model_type": "gemma",
                     "num_attention_heads": 8,
                     ## TODO:
-                    "num_hidden_layers": 18,
-                    # "num_hidden_layers": 6,
+                    # "num_hidden_layers": 18,
+                    "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
@@ -140,8 +140,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 model_type="gemma",
                 num_attention_heads=8,
                 ## TODO:
-                num_hidden_layers=18,
-                # num_hidden_layers=6,
+                # num_hidden_layers=18,
+                num_hidden_layers=6,
                 num_key_value_heads=1,
                 pad_token_id=0,
                 rms_norm_eps=1e-06,

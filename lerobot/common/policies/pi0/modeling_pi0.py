@@ -770,7 +770,7 @@ class PI0FlowMatching(nn.Module):
         self.set_requires_grad()
         
         ##TODO:
-        self.merge_bagel = False
+        self.merge_bagel = True
 
 
     def set_requires_grad(self):
@@ -1154,8 +1154,7 @@ class PI0FlowMatching(nn.Module):
             else:
                 predict_images = None
             bagel_kv_cache = past_key_values
-            import ipdb;ipdb.set_trace()
-            bagle_sample_lens = [new_lens[-1], -1]
+            bagel_sample_lens = [newlens[-1], -1]
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
@@ -1174,8 +1173,7 @@ class PI0FlowMatching(nn.Module):
             bagel_pad_masks = []
             bagel_att_masks = []
             batch_id = 0
-            import ipdb;ipdb.set_trace()
-            max_sample_lens = new_lens[-1]
+            max_sample_lens = newlens[-1]
             bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
             bagel_pad_masks.append(bagel_pad_mask)
             bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
@@ -1248,7 +1246,6 @@ class PI0FlowMatching(nn.Module):
 
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks,
             position_ids=position_ids,
@@ -1256,8 +1253,8 @@ class PI0FlowMatching(nn.Module):
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
             fill_kv_cache=False,
-            bagel_kv_cache=bagel_kv_cache,
-            bagel_sample_lens=bagel_sample_lens
+            bagel_kv_cache=None,
+            bagel_sample_lens=None
         )
 
         suffix_out = outputs_embeds[1]

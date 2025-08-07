@@ -199,10 +199,12 @@ def rollout(
         all_successes.append(torch.tensor(int(successes)).bool())
 
         step += 1
+        print(step)
         raw_observation['pixels'] = {
                 "image": new_observation['agentview_image'][::-1, :, :].copy(),
                 "wrist_image": new_observation['robot0_eye_in_hand_image'][::-1, :, :].copy(),
         }
+        import ipdb;ipdb.set_trace()
         raw_observation['state'] = np.concatenate([new_observation['robot0_joint_pos'], -new_observation['robot0_joint_pos'][-1:]], axis=0)
 
     # Track the final observation.
@@ -525,9 +527,10 @@ def validate_policy(
     policy.eval()
     raw_observation = {
         "pixels":{
-            "agentview_image": (batch['observation.images.image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
-            "robot0_eye_in_hand_image": (batch['observation.images.wrist_image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
-        }
+            "image": (batch['observation.images.image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+            "wrist_image": (batch['observation.images.wrist_image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
+        },
+        "state": np.zeros((8,))
     }
 
     observation_predicted_images = []
