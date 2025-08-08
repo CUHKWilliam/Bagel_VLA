@@ -23,7 +23,7 @@ import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
-
+import copy
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
@@ -163,7 +163,8 @@ def train(cfg: TrainPipelineConfig):
             task = task_suite.get_task(task_id)
             task_name = task.name
             ## TODO: just for debug now
-            if task_name != "KITCHEN_SCENE5_put_the_black_bowl_on_the_plate":
+            print(task_name)
+            if task_name != "KITCHEN_SCENE1_open_the_bottom_drawer_of_the_cabinet":
                 continue
             task_description = task.language
             task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
@@ -176,14 +177,13 @@ def train(cfg: TrainPipelineConfig):
                 "camera_heights": 256,
                 "camera_widths": 256
             }
-            env = OffScreenRenderEnv(**env_args)
-            env.seed(0)
-            env.reset()
-            eval_envs.append(env)
-            ## TODO: just for debug now            
-            if task_name != "KITCHEN_SCENE5_put_the_black_bowl_on_the_plate_demo.hdf5":
-                break
-        eval_envs = [env]
+            for _ in range(2):
+                env = OffScreenRenderEnv(**env_args)
+                env.seed(0)
+                env.reset()
+                eval_envs.append(env)
+            break
+        
     if accelerator.is_main_process:
         logging.info("Creating policy")
     cfg.policy.device = "cpu"
@@ -338,25 +338,30 @@ def train(cfg: TrainPipelineConfig):
             # Unwrap model for evaluation
             unwrapped_policy = accelerator.unwrap_model(policy)
             unwrapped_policy.eval()
-           
+            
+            ## TODO: validation
+            print("validation begins")
             dl_iter_val = iter(dataloader)
             val_total_steps = 1
-            if True:
-                for val_step in range(val_total_steps):
+            for val_step in range(val_total_steps):
+                while True:
                     try:
                         batch = next(dl_iter)
                     except StopIteration:
                         dl_iter = iter(dataloader)
                         batch = next(dl_iter)          
+                    if batch['task'][0] != "open the bottom drawer of the cabinet":
+                        continue
                     with torch.no_grad():
                         val_info = validate_policy(
                             unwrapped_policy,
                             batch
                         )
-
+                    break
+            print("validation end")
             process_index = accelerator.process_index
             num_processes = accelerator.num_processes
-            local_eval_envs = eval_envs[accelerator.process_index::accelerator.num_processes] if accelerator.process_index in list(range(len(eval_envs))) else eval_envs
+            local_eval_envs = eval_envs[accelerator.process_index::accelerator.num_processes] if accelerator.process_index in list(range(len(eval_envs))) else None
             with (
                 torch.no_grad(),
             ):

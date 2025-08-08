@@ -101,9 +101,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "hidden_size": 2048,
                     "intermediate_size": 16384,
                     "model_type": "gemma",
-                    "num_attention_heads": 8,
-                    # "num_hidden_layers": 18, ## TODO:
-                    "num_hidden_layers": 2,
+                    # "num_attention_heads": 8,
+                    "num_hidden_layers": 18, ## TODO:
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
@@ -114,8 +113,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 4304,
                     "model_type": "siglip_vision_model",
                     "num_attention_heads": 16,
-                    # "num_hidden_layers": 27, ##TODO:
-                    "num_hidden_layers": 2,
+                    "num_hidden_layers": 27, ##TODO:
+                    # "num_hidden_layers": 2,
                     "num_image_tokens": 256,
                     "patch_size": 14,
                     "projection_dim": 2048,
@@ -279,6 +278,11 @@ class Bagel(PreTrainedModel):
         packed_sequence = packed_text_embedding.new_zeros(size=(sequence_length, self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
         if nested_attention_masks is None:
+            # if torch.cuda.current_device() == 0:
+            #     import ipdb;ipdb.set_trace()
+            # else:
+            #     while True: pass
+
             sparse_mask = create_sparse_mask(sample_lens, split_lens, attn_modes, packed_text_embedding.device)
             seqlen = sum(sample_lens)
             block_mask = create_block_mask(

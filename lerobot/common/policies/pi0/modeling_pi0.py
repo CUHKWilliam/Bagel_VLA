@@ -123,13 +123,13 @@ class DataArguments:
         metadata={"help": "Number of background workers for the PyTorch DataLoader."}
     )
     max_num_tokens_per_sample: int = field(
-        default=26384,
-        # default=5000,
+        # default=26384,
+        default=5000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
-        default=66864,
-        # default=10000,
+        # default=66864,
+        default=30000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -604,7 +604,7 @@ class PI0Policy(PreTrainedPolicy):
 
     def prepare_state(self, batch):
         """Pad state"""
-        state = pad_vector(batch[OBS_ROBOT], self.config.max_state_dim)
+        state = pad_vector(batch[OBS_ROBOT], self.config.max_state_dim) * 0
         return state
 
     def prepare_action(self, batch):
@@ -649,7 +649,7 @@ class PI0FlowMatching(nn.Module):
         llm_config.qk_norm = model_args.llm_qk_norm
         llm_config.tie_word_embeddings = model_args.tie_word_embeddings
         llm_config.freeze_und = training_args.freeze_und
-        language_model = Qwen2ForCausalLM(llm_config)
+        language_model = Qwen2ForCausalLM(llm_config, visual_gen = training_args.visual_gen)
         
         if training_args.copy_init_moe:
             language_model.init_moe()
@@ -681,7 +681,7 @@ class PI0FlowMatching(nn.Module):
         bagel_model = Bagel(
             language_model, 
             vit_model if training_args.visual_und else None, 
-            self.bagel_config
+            self.bagel_config,
         )
         if training_args.visual_und:
             bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
@@ -701,8 +701,7 @@ class PI0FlowMatching(nn.Module):
         # maybe freeze something:
         if training_args.action_gen:
             for name, param in bagel_model.named_parameters():
-                if "_moe_gen2" not in name and "action" not in name:
-                    param.requires_grad = False
+                param.requires_grad = False
 
         if training_args.freeze_vae and training_args.visual_gen:
             for param in vae_model.parameters():
@@ -727,7 +726,7 @@ class PI0FlowMatching(nn.Module):
             attention_implementation=self.config.attention_implementation,
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config).to(torch.float32).cuda()
-        self.language_tokenizer_pi0 = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        self.language_tokenizer_pi0 = AutoTokenizer.from_pretrained("/root/paligemma-3b-pt-224")
             
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
@@ -961,19 +960,18 @@ class PI0FlowMatching(nn.Module):
                 bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
             bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+            ## TODO:
+            prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())<0.5, prefix_pad_masks)
         
             pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
-            att_masks = torch.cat([bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
+            att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
         else:
             pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
             att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-
+        
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        if self.merge_bagel:
-            for batch_id in range(len(sample_lens)):
-                att_2d_masks[batch_id][:sample_lens[batch_id], :sample_lens[batch_id]] = 0
-
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
+
 
         if self.merge_bagel:
             past_key_values = ret['past_key_values']
@@ -1154,7 +1152,8 @@ class PI0FlowMatching(nn.Module):
             else:
                 predict_images = None
             bagel_kv_cache = past_key_values
-            bagel_sample_lens = [newlens[-1], -1]
+            import ipdb;ipdb.set_trace()
+            bagel_sample_lens = [new_lens[-1], -1]
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
@@ -1173,7 +1172,8 @@ class PI0FlowMatching(nn.Module):
             bagel_pad_masks = []
             bagel_att_masks = []
             batch_id = 0
-            max_sample_lens = newlens[-1]
+            import ipdb;ipdb.set_trace()
+            max_sample_lens = new_lens[-1]
             bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
             bagel_pad_masks.append(bagel_pad_mask)
             bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
@@ -1246,6 +1246,7 @@ class PI0FlowMatching(nn.Module):
 
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks,
             position_ids=position_ids,

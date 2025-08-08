@@ -174,7 +174,7 @@ class Qwen2Config(_Qwen2Config):
         **kwargs,
     ):
         ## TODO:
-        num_hidden_layers = 8
+        # num_hidden_layers = 8
         super().__init__(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -379,23 +379,24 @@ class PackedAttention(Qwen2Attention):
         return packed_attn_output, past_key_values
 
 class PackedAttentionMoT(Qwen2Attention):
-    def __init__(self, config, layer_idx: Optional[int] = None):
+    def __init__(self, config, layer_idx: Optional[int] = None, visual_gen=True):
         super().__init__(config, layer_idx)
         if self.config.qk_norm:
             self.q_norm = Qwen2RMSNorm(self.head_dim, eps=config.rms_norm_eps)
             self.k_norm = Qwen2RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-            self.q_norm_moe_gen = Qwen2RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-            self.k_norm_moe_gen = Qwen2RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+            if visual_gen:
+                self.q_norm_moe_gen = Qwen2RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+                self.k_norm_moe_gen = Qwen2RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         else:
             self.q_norm = nn.Identity()
             self.k_norm = nn.Identity()
             self.q_norm_moe_gen = nn.Identity()
             self.k_norm_moe_gen = nn.Identity()
-
-        self.q_proj_moe_gen = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=True)
-        self.k_proj_moe_gen = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
-        self.v_proj_moe_gen = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
-        self.o_proj_moe_gen = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        if visual_gen:
+            self.q_proj_moe_gen = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=True)
+            self.k_proj_moe_gen = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
+            self.v_proj_moe_gen = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
+            self.o_proj_moe_gen = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
 
 
     def forward(self, *args, **kwargs):
@@ -419,19 +420,19 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_value_states = packed_sequence.new_zeros((packed_sequence.shape[0], self.num_key_value_heads * self.head_dim))
 
         packed_sequence_und = packed_sequence[packed_und_token_indexes]
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_sequence_gen = packed_sequence[packed_gen_token_indexes]
 
         packed_query_states[packed_und_token_indexes] = self.q_proj(packed_sequence_und)
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_query_states[packed_gen_token_indexes] = self.q_proj_moe_gen(packed_sequence_gen)
 
         packed_key_states[packed_und_token_indexes] = self.k_proj(packed_sequence_und)
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_key_states[packed_gen_token_indexes] = self.k_proj_moe_gen(packed_sequence_gen)
 
         packed_value_states[packed_und_token_indexes] = self.v_proj(packed_sequence_und)
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_value_states[packed_gen_token_indexes] = self.v_proj_moe_gen(packed_sequence_gen)
 
         packed_query_states = packed_query_states.view(-1, self.num_heads, self.head_dim)
@@ -446,13 +447,13 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_query_states_[packed_und_token_indexes] = self.q_norm(packed_query_states[packed_und_token_indexes])
         if self.config.freeze_und:
             packed_query_states_[packed_und_token_indexes] = packed_query_states_[packed_und_token_indexes].detach()
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_query_states_[packed_gen_token_indexes] = self.q_norm_moe_gen(packed_query_states[packed_gen_token_indexes])
 
         packed_key_states_[packed_und_token_indexes] = self.k_norm(packed_key_states[packed_und_token_indexes])
         if self.config.freeze_und:
             packed_key_states_[packed_und_token_indexes] = packed_key_states_[packed_und_token_indexes].detach()
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_key_states_[packed_gen_token_indexes] = self.k_norm_moe_gen(packed_key_states[packed_gen_token_indexes])
 
         packed_cos, packed_sin = packed_position_embeddings
@@ -505,7 +506,7 @@ class PackedAttentionMoT(Qwen2Attention):
         packed_attn_output = packed_attn_output.transpose(0, 1).reshape(-1, self.num_heads * self.head_dim)
         packed_attn_output_ = packed_attn_output.new_zeros(packed_attn_output.shape)
         packed_attn_output_[packed_und_token_indexes] = self.o_proj(packed_attn_output[packed_und_token_indexes])
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
             packed_attn_output_[packed_gen_token_indexes] = self.o_proj_moe_gen(packed_attn_output[packed_gen_token_indexes])
         return packed_attn_output_, past_key_values
 
@@ -677,21 +678,21 @@ class PackedAttentionMoT2(Qwen2Attention):
         packed_value_states = packed_sequence.new_zeros((packed_sequence.shape[0], self.num_key_value_heads * self.head_dim))
 
         packed_sequence_und = packed_sequence[packed_und_token_indexes]
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_sequence_gen = packed_sequence[packed_gen_token_indexes]
         packed_sequence_act = packed_sequence[packed_action_token_indexes]
         packed_query_states[packed_und_token_indexes] = self.q_proj(packed_sequence_und)
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_query_states[packed_gen_token_indexes] = self.q_proj_moe_gen(packed_sequence_gen)
         packed_query_states[packed_action_token_indexes] = self.q_proj_moe_gen2(packed_sequence_act)
 
         packed_key_states[packed_und_token_indexes] = self.k_proj(packed_sequence_und)
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0 :
             packed_key_states[packed_gen_token_indexes] = self.k_proj_moe_gen(packed_sequence_gen)
         packed_key_states[packed_action_token_indexes] = self.k_proj_moe_gen2(packed_sequence_act)
 
         packed_value_states[packed_und_token_indexes] = self.v_proj(packed_sequence_und)
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_value_states[packed_gen_token_indexes] = self.v_proj_moe_gen(packed_sequence_gen)
         packed_value_states[packed_action_token_indexes] = self.v_proj_moe_gen2(packed_sequence_act)
 
@@ -707,14 +708,14 @@ class PackedAttentionMoT2(Qwen2Attention):
         packed_query_states_[packed_und_token_indexes] = self.q_norm(packed_query_states[packed_und_token_indexes])
         if self.config.freeze_und:
             packed_query_states_[packed_und_token_indexes] = packed_query_states_[packed_und_token_indexes].detach()
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
             packed_query_states_[packed_gen_token_indexes] = self.q_norm_moe_gen(packed_query_states[packed_gen_token_indexes])
         packed_query_states_[packed_action_token_indexes] = self.q_norm_moe_gen2(packed_query_states[packed_action_token_indexes])
 
         packed_key_states_[packed_und_token_indexes] = self.k_norm(packed_key_states[packed_und_token_indexes])
         if self.config.freeze_und:
             packed_key_states_[packed_und_token_indexes] = packed_key_states_[packed_und_token_indexes].detach()
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None  and len(packed_gen_token_indexes) > 0:
             packed_key_states_[packed_gen_token_indexes] = self.k_norm_moe_gen(packed_key_states[packed_gen_token_indexes])
         packed_key_states_[packed_action_token_indexes] = self.k_norm_moe_gen2(packed_key_states[packed_action_token_indexes])
 
@@ -763,7 +764,7 @@ class PackedAttentionMoT2(Qwen2Attention):
         packed_attn_output = packed_attn_output.transpose(0, 1).reshape(-1, self.num_heads * self.head_dim)
         packed_attn_output_ = packed_attn_output.new_zeros(packed_attn_output.shape)
         packed_attn_output_[packed_und_token_indexes] = self.o_proj(packed_attn_output[packed_und_token_indexes])
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
             packed_attn_output_[packed_gen_token_indexes] = self.o_proj_moe_gen(packed_attn_output[packed_gen_token_indexes])
         packed_attn_output_[packed_action_token_indexes] = self.o_proj_moe_gen2(packed_attn_output[packed_action_token_indexes])
     
@@ -993,19 +994,23 @@ class Qwen2MoTDecoderLayer(nn.Module):
         config, 
         layer_idx: Optional[int] = None, 
         attn_module: Optional[Qwen2Attention] = PackedAttentionMoT,
+        visual_gen=True,
     ):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.freeze_und = config.freeze_und
 
-        self.self_attn = attn_module(config, layer_idx)
+        self.self_attn = attn_module(config, layer_idx, visual_gen=visual_gen)
 
         self.mlp = Qwen2MLP(config)
-        self.mlp_moe_gen = Qwen2MLP(config)
+        if visual_gen:
+            self.mlp_moe_gen = Qwen2MLP(config)
         self.input_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.input_layernorm_moe_gen = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        if visual_gen:
+            self.input_layernorm_moe_gen = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm_moe_gen = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        if visual_gen:
+            self.post_attention_layernorm_moe_gen = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(self, *args, **kwargs):
         if self.training:
@@ -1028,7 +1033,7 @@ class Qwen2MoTDecoderLayer(nn.Module):
         residual = packed_sequence
         packed_sequence_ = packed_sequence.new_zeros(packed_sequence.shape)
         packed_sequence_[packed_und_token_indexes] = self.input_layernorm(packed_sequence[packed_und_token_indexes])
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
             packed_sequence_[packed_gen_token_indexes] = self.input_layernorm_moe_gen(packed_sequence[packed_gen_token_indexes])
 
         # Self Attention
@@ -1043,8 +1048,6 @@ class Qwen2MoTDecoderLayer(nn.Module):
         )
         if self.freeze_und:
             packed_sequence_[packed_und_token_indexes] = packed_sequence_[packed_und_token_indexes].detach()
-        if packed_action_token_indexes is not None:
-            packed_sequence_[packed_action_token_indexes] *= 0.
         packed_sequence = residual + packed_sequence_
 
         # Fully Connected
@@ -1055,12 +1058,10 @@ class Qwen2MoTDecoderLayer(nn.Module):
         )
         if self.freeze_und:
             packed_sequence_[packed_und_token_indexes] = packed_sequence_[packed_und_token_indexes].detach()
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
             packed_sequence_[packed_gen_token_indexes] = self.mlp_moe_gen(
                 self.post_attention_layernorm_moe_gen(packed_sequence[packed_gen_token_indexes])
             )
-        if packed_action_token_indexes is not None:
-            packed_sequence_[packed_action_token_indexes] *= 0.
         packed_sequence = residual + packed_sequence_
 
         return packed_sequence, past_key_values
@@ -1182,10 +1183,8 @@ class Qwen2MoTDecoderLayer2(nn.Module):
         residual = packed_sequence
         packed_sequence_ = packed_sequence.new_zeros(packed_sequence.shape)
         packed_sequence_[packed_und_token_indexes] = self.input_layernorm(packed_sequence[packed_und_token_indexes])
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
             packed_sequence_[packed_gen_token_indexes] = self.input_layernorm_moe_gen(packed_sequence[packed_gen_token_indexes])
-        if packed_action_token_indexes is not None:
-            packed_sequence_[packed_action_token_indexes] = self.input_layernorm_moe_gen2(packed_sequence[packed_action_token_indexes])
 
         # Self Attention
         packed_sequence_ = self.self_attn(
@@ -1210,13 +1209,9 @@ class Qwen2MoTDecoderLayer2(nn.Module):
         if self.freeze_und:
             packed_sequence_[packed_und_token_indexes] = packed_sequence_[packed_und_token_indexes].detach()
 
-        if packed_gen_token_indexes is not None:
+        if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
             packed_sequence_[packed_gen_token_indexes] = self.mlp_moe_gen(
                 self.post_attention_layernorm_moe_gen(packed_sequence[packed_gen_token_indexes])
-            )
-        if packed_action_token_indexes is not None:
-            packed_sequence_[packed_action_token_indexes] = self.mlp_moe_gen2(
-                self.post_attention_layernorm_moe_gen2(packed_sequence[packed_action_token_indexes])
             )
         packed_sequence = residual + packed_sequence_
 
@@ -1415,25 +1410,20 @@ Decoder_layer_dict = {
 
 
 class Qwen2Model(Qwen2PreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, visual_gen=True):
+        super().__init__(config,)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
         self.use_moe = 'Mo' in config.layer_module
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        # layer_module = Decoder_layer_dict[config.layer_module]
-        NUM_ACTION_LAYERS = 0
+        layer_module = Decoder_layer_dict[config.layer_module]
         self.layers = nn.ModuleList(
-            [Qwen2MoTDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers - NUM_ACTION_LAYERS)] \
-                + [Qwen2MoTDecoderLayer2(config, config.num_hidden_layers - NUM_ACTION_LAYERS + layer_idx) for layer_idx in range(NUM_ACTION_LAYERS)] 
+            [layer_module(config, layer_idx, visual_gen=visual_gen) for layer_idx in range(config.num_hidden_layers)]
         )
-        # self.layers = nn.ModuleList(
-        #     [layer_module(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
-        # )
 
         self.norm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        if self.use_moe:
+        if visual_gen:
             self.norm_moe_gen = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
             self.norm_moe_gen2 = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen2RotaryEmbedding(config=config)
@@ -1493,9 +1483,8 @@ class Qwen2Model(Qwen2PreTrainedModel):
             packed_sequence_[packed_und_token_indexes] = self.norm(packed_sequence[packed_und_token_indexes])
             if self.config.freeze_und:
                 packed_sequence_[packed_und_token_indexes] = packed_sequence_[packed_und_token_indexes].detach()
-            packed_sequence_[packed_gen_token_indexes] = self.norm_moe_gen(packed_sequence[packed_gen_token_indexes])
-            if packed_action_token_indexes is not None:
-                packed_sequence_[packed_action_token_indexes] = self.norm_moe_gen2(packed_sequence[packed_action_token_indexes])
+            if packed_gen_token_indexes is not None and len(packed_gen_token_indexes) > 0:
+                packed_sequence_[packed_gen_token_indexes] = self.norm_moe_gen(packed_sequence[packed_gen_token_indexes])
             return packed_sequence_, past_key_values
         else:
             return self.norm(packed_sequence), past_key_values
@@ -1579,9 +1568,9 @@ class Qwen2Model(Qwen2PreTrainedModel):
 class Qwen2ForCausalLM(Qwen2PreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
-    def __init__(self, config):
+    def __init__(self, config, visual_gen=True):
         super().__init__(config)
-        self.model = Qwen2Model(config)
+        self.model = Qwen2Model(config, visual_gen=visual_gen)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
     

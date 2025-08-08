@@ -92,8 +92,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "model_type": "gemma",
                     "num_attention_heads": 8,
                     ## TODO:
-                    # "num_hidden_layers": 18,
-                    "num_hidden_layers": 6,
+                    "num_hidden_layers": 18,
+                    # "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
@@ -140,8 +140,8 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 model_type="gemma",
                 num_attention_heads=8,
                 ## TODO:
-                # num_hidden_layers=18,
-                num_hidden_layers=6,
+                num_hidden_layers=18,
+                # num_hidden_layers=6,
                 num_key_value_heads=1,
                 pad_token_id=0,
                 rms_norm_eps=1e-06,
@@ -287,9 +287,14 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     bagel_value_state = bagel_kv_cache.value_cache[layer_idx][curr_len: curr_len + bagel_sample_lens[batch_id]]
                     seq_len, num_heads, feat_dim = bagel_key_state.size()
                     bagel_key_state = bagel_key_state.view(seq_len, num_heads // 2, feat_dim * 2).mean(1)[:, None, :]
-                    bagel_query_state = bagel_query_state.view(seq_len, num_heads // 2, feat_dim * 2).repeat((1, 4, 1)) * 0
+                    bagel_query_state = bagel_query_state.view(seq_len, num_heads // 2, feat_dim * 2).repeat((1, 4, 1))
                     bagel_value_state = bagel_value_state.view(seq_len, num_heads // 2, feat_dim * 2).mean(1)[:, None, :]
-                    
+                    padding_key = torch.zeros((max_sample_len - len(bagel_key_state), bagel_key_state.size(1), bagel_key_state.size(2))).float().cuda()
+                    padding_query = torch.zeros((max_sample_len - len(bagel_query_state), bagel_query_state.size(1), bagel_query_state.size(2))).float().cuda()
+                    padding_value = torch.zeros((max_sample_len - len(bagel_value_state), bagel_value_state.size(1), bagel_value_state.size(2))).float().cuda()
+                    bagel_key_state = torch.cat([bagel_key_state, padding_key], dim=0)
+                    bagel_query_state = torch.cat([bagel_query_state, padding_query], dim=0)
+                    bagel_value_state = torch.cat([bagel_value_state, padding_value], dim=0)
                     batch_bagel_key_state.append(bagel_key_state)
                     batch_bagel_query_state.append(bagel_query_state)
                     batch_bagel_value_state.append(bagel_value_state)

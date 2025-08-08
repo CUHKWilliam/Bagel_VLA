@@ -131,10 +131,10 @@ def rollout(
     observation2 = observations[0]['robot0_eye_in_hand_image']
     raw_observation = {
         "pixels":{
-            "image": observation1[::-1, :, :].copy(),
-            "wrist_image": observation2[::-1, :, :].copy(),
+            "image": observation1[::-1, ::-1, ::-1].copy(),
+            "wrist_image": observation2[::-1, ::-1, ::-1].copy(),
         },
-        "state": np.concatenate([observations[0]['robot0_joint_pos'], -observations[0]['robot0_joint_pos'][-1:]], axis=0)
+        "state": np.concatenate([observations[0]['robot0_joint_pos'], -observations[0]['robot0_joint_pos'][-1:]], axis=0) * 0
     }
 
     if render_callback is not None:
@@ -177,18 +177,20 @@ def rollout(
         if isinstance(actions, torch.Tensor):
             actions = actions.to("cpu").numpy()
         success = False
-        for action in actions:
+        if True:
             # Apply the next action.
-            try:
-                new_observation, reward, done, info = env.step(action)
-                success = env.check_success()
-                if success:
+            for action in actions:
+                try:
+                    new_observation, reward, done, info = env.step(action)
+                    success = env.check_success()
+                    if success:
+                        break
+                    if render_callback is not None:
+                        render_callback(env, env_id)
+                except:
+                    done = True
                     break
-            except:
-                done = True
-                break
-            if render_callback is not None:
-                render_callback(env, env_id)
+
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
         successes = success
@@ -201,11 +203,10 @@ def rollout(
         step += 1
         print(step)
         raw_observation['pixels'] = {
-                "image": new_observation['agentview_image'][::-1, :, :].copy(),
-                "wrist_image": new_observation['robot0_eye_in_hand_image'][::-1, :, :].copy(),
+                "image": new_observation['agentview_image'][::-1, ::-1, ::-1].copy(),
+                "wrist_image": new_observation['robot0_eye_in_hand_image'][::-1, ::-1, ::-1].copy(),
         }
-        import ipdb;ipdb.set_trace()
-        raw_observation['state'] = np.concatenate([new_observation['robot0_joint_pos'], -new_observation['robot0_joint_pos'][-1:]], axis=0)
+        raw_observation['state'] = np.concatenate([new_observation['robot0_joint_pos'], -new_observation['robot0_joint_pos'][-1:]], axis=0)  * 0
 
     # Track the final observation.
     if return_observations:
@@ -282,10 +283,15 @@ def eval_policy(
         # noqa: B023
         if n_episodes_rendered >= max_episodes_rendered:
             return
-        image = env.step([0] * 7)[0]['agentview_image']
+        image = env.step([0] * 7)[0]['agentview_image'][::-1, ::-1, ::-1]
         if env_id not in ep_frames.keys():
             ep_frames[env_id] = []
         ep_frames[env_id].append(image)
+        
+        import torch
+        if torch.cuda.current_device() == 0:
+            cv2.imwrite('debug.png', image)
+        #     import ipdb;ipdb.set_trace()
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -480,15 +486,14 @@ def eval_main(cfg: EvalPipelineConfig):
     )
     policy.eval()
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
-        info = eval_policy(
-            env,
-            policy,
-            cfg.eval.n_episodes,
-            max_episodes_rendered=10,
-            videos_dir=Path(cfg.output_dir) / "videos",
-            start_seed=cfg.seed,
-        )
+    info = eval_policy(
+        env,
+        policy,
+        cfg.eval.n_episodes,
+        max_episodes_rendered=10,
+        videos_dir=Path(cfg.output_dir) / "videos",
+        start_seed=cfg.seed,
+    )
     print(info["aggregated"])
 
     # Save info
@@ -544,8 +549,9 @@ def validate_policy(
         actions, predicted_images = policy.select_action(observation)
     policy.train()
     loss, output_dict = policy.forward(batch)
-    import ipdb;ipdb.set_trace()
-    return info
+    gt_action = batch['action']
+    predicted_action = actions
+    print("validate loss:", loss)
 
 
 def _compile_episode_data(
