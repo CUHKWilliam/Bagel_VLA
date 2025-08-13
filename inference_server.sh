@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 accelerate launch --config_file accelerate_config_inference.yaml  lerobot/scripts/eval_server.py --policy.path=lerobot/pi0 --dataset.repo_id stack_boxes_dataset,close_drawer_dataset

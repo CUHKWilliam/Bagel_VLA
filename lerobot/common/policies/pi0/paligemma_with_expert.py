@@ -239,7 +239,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         fill_kv_cache: Optional[bool] = None,
         bagel_sample_lens = None,
     ):
-        models = [self.paligemma.language_model, self.gemma_expert.model]
+        models = [self.paligemma.language_model.model, self.gemma_expert.model]
 
         for hidden_states in inputs_embeds:
             # TODO this is very inefficient

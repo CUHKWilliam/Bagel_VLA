@@ -101,7 +101,6 @@ def save_checkpoint(
     cfg.save_pretrained(pretrained_dir)
     save_training_state(checkpoint_dir, step, policy_.optimizer, policy_.lr_scheduler)
 
-
 def save_training_state(
     checkpoint_dir: Path,
     train_step: int,

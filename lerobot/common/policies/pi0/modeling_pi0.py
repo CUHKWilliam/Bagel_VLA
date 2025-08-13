@@ -726,7 +726,7 @@ class PI0FlowMatching(nn.Module):
             attention_implementation=self.config.attention_implementation,
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config).to(torch.float32).cuda()
-        self.language_tokenizer_pi0 = AutoTokenizer.from_pretrained("/root/paligemma-3b-pt-224")
+        self.language_tokenizer_pi0 = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
             
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
@@ -928,6 +928,10 @@ class PI0FlowMatching(nn.Module):
     def forward(
         self, batch, actions, noise=None, time=None
     ) -> Tensor:
+        if torch.cuda.current_device() == 0:
+            import ipdb;ipdb.set_trace()
+        else:
+            while True: pass
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -1153,7 +1157,7 @@ class PI0FlowMatching(nn.Module):
                 predict_images = None
             bagel_kv_cache = past_key_values
             import ipdb;ipdb.set_trace()
-            bagel_sample_lens = [new_lens[-1], -1]
+            bagel_sample_lens = [newlens[-1], -1]
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
@@ -1173,7 +1177,7 @@ class PI0FlowMatching(nn.Module):
             bagel_att_masks = []
             batch_id = 0
             import ipdb;ipdb.set_trace()
-            max_sample_lens = new_lens[-1]
+            max_sample_lens = newlens[-1]
             bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
             bagel_pad_masks.append(bagel_pad_mask)
             bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
