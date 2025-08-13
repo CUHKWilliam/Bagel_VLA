@@ -67,7 +67,7 @@ def listen_and_process_input(llm_model):
         observation = {
             key: observation[key].cuda().unsqueeze(0) for key in observation
         }
-        observation['task'] = data2['task']
+        observation['task'] = [data2['task']]
         action_pred = llm_model.select_action(observation)
         outputs = action_pred
         print("outputs:", outputs)

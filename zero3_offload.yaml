@@ -9,14 +9,14 @@
         "min_loss_scale": 1
     },
     "bf16": {
-        "enabled": false
+        "enabled": true
     },
     "optimizer": {
         "type": "AdamW",
         "params": {
           "lr": 1e-4,
-          "eps": 1e-12,
           "weight_decay": 1e-10,
+          "eps": 1e-10,
           "betas": [0.95, 0.99]
         } 
     },
@@ -31,14 +31,14 @@
     "zero_optimization": {
         "stage": 2,
         "allgather_partitions": true,
-        "allgather_bucket_size": 1e8,
+        "allgather_bucket_size": 1e7,
         "overlap_comm": true,
         "contiguous_gradients": true,
-        "sub_group_size": 1e8,
-        "reduce_bucket_size": 5e7,
+        "sub_group_size": 1e7,
+        "reduce_bucket_size": 5e6,
         "gather_16bit_weights_on_model_save": true
     },
-    "gradient_accumulation_steps": 8,
+    "gradient_accumulation_steps": 1,
     "gradient_clipping": "auto",
     "train_batch_size": "auto",
     "train_micro_batch_size_per_gpu": 1,

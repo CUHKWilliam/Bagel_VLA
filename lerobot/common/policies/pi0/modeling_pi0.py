@@ -124,12 +124,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=5000,
+        default=3000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=30000,
+        default=6000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -514,7 +514,9 @@ class PI0Policy(PreTrainedPolicy):
         actions, predicted_images = self.model.sample_actions(batch)
         original_action_dim = self.config.action_feature.shape[0]
         actions = actions[:, :, :original_action_dim]
+        actions_gripper = actions[..., -1].clone()
         actions = self.unnormalize_outputs({"action": actions})["action"]
+        actions[..., -1] = actions_gripper.clone()
         if self.config.adapt_to_pi_aloha:
             actions = self._pi_aloha_encode_actions(actions)
         return actions[0], predicted_images
@@ -678,6 +680,7 @@ class PI0FlowMatching(nn.Module):
             interpolate_pos=model_args.interpolate_pos,
             timestep_shift=training_args.timestep_shift,
         )
+        self.bagel_config.chunk_size = config.chunk_size
         bagel_model = Bagel(
             language_model, 
             vit_model if training_args.visual_und else None, 
@@ -760,14 +763,13 @@ class PI0FlowMatching(nn.Module):
             use_flex=training_args.use_flex,
             data_status=None,
             action_dim=self.bagel_model.config.action_dim,
-            action_horizon = self.bagel_model.config.action_horizon,
+            action_horizon = self.config.chunk_size,
             visual_gen=training_args.visual_gen,
         )
         self.action_tokenizer = ActionTokenizer(
             tokenizer=tokenizer,
         )
         self.set_requires_grad()
-        
         ##TODO:
         self.merge_bagel = True
 
@@ -781,7 +783,7 @@ class PI0FlowMatching(nn.Module):
             mean=0.0,
             std=1.0,
             size=shape,
-            dtype=torch.float32,
+            dtype=self.dtype,
             device=device,
         )
         return noise
@@ -789,14 +791,16 @@ class PI0FlowMatching(nn.Module):
     def sample_time(self, bsize, device):
         time_beta = sample_beta(1.5, 1.0, bsize, device)
         time = time_beta * 0.999 + 0.001
-        return time.to(dtype=torch.float32, device=device)
+        return time.to(dtype=self.dtype, device=device)
 
     def embed_prefix(
         self, batch
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         datas = self.dataset(batch)
         data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
-        data_batch = autocast(data_batch, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
+        self.dtype = self.state_proj.weight.dtype
+        batch = autocast(batch, torch.float32, self.dtype)
+        data_batch = autocast(data_batch, torch.float32, self.dtype)
         if training_args.visual_gen:
             with torch.no_grad():
                 data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
@@ -859,7 +863,6 @@ class PI0FlowMatching(nn.Module):
 
         # Embed state
         state_emb = self.state_proj(state)
-        state_emb = state_emb.to(dtype=torch.bfloat16)
         embs.append(state_emb[:, None, :])
         bsize = state_emb.shape[0]
         dtype = state_emb.dtype
@@ -928,24 +931,19 @@ class PI0FlowMatching(nn.Module):
     def forward(
         self, batch, actions, noise=None, time=None
     ) -> Tensor:
-        if torch.cuda.current_device() == 0:
-            import ipdb;ipdb.set_trace()
-        else:
-            while True: pass
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+        data_batch,  prefix_embs, prefix_pad_masks, prefix_att_masks, state  = self.embed_prefix(
+            batch, 
+        )
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
-
+        actions = actions.to(self.dtype)
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-
-        data_batch,  prefix_embs, prefix_pad_masks, prefix_att_masks, state  = self.embed_prefix(
-            batch, 
-        )
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
         
         if self.merge_bagel:
@@ -996,7 +994,7 @@ class PI0FlowMatching(nn.Module):
         )
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         # Original openpi code, upcast attention output
-        suffix_out = suffix_out.to(dtype=torch.float32)
+        suffix_out = suffix_out.to(dtype=self.dtype)
         v_t = self.action_out_proj(suffix_out)
         action_mse = F.mse_loss(u_t, v_t, reduction="none")
         
@@ -1069,7 +1067,7 @@ class PI0FlowMatching(nn.Module):
             for k, v in generation_input.items():
                 if torch.is_tensor(v):
                     generation_input[k] = v.to(device)
-            generation_input = autocast(generation_input, torch.float32, self.vae_model.encoder.conv_in.weight.dtype)
+            generation_input = autocast(generation_input, self.dtype, self.vae_model.encoder.conv_in.weight.dtype)
             past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
 
             # add text
@@ -1156,7 +1154,6 @@ class PI0FlowMatching(nn.Module):
             else:
                 predict_images = None
             bagel_kv_cache = past_key_values
-            import ipdb;ipdb.set_trace()
             bagel_sample_lens = [newlens[-1], -1]
         else:
             bagel_kv_cache = None
@@ -1176,7 +1173,6 @@ class PI0FlowMatching(nn.Module):
             bagel_pad_masks = []
             bagel_att_masks = []
             batch_id = 0
-            import ipdb;ipdb.set_trace()
             max_sample_lens = newlens[-1]
             bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
             bagel_pad_masks.append(bagel_pad_mask)
@@ -1204,10 +1200,10 @@ class PI0FlowMatching(nn.Module):
         )
 
         dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+        dt = torch.tensor(dt, dtype=self.dtype, device=device)
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        time = torch.tensor(1.0, dtype=self.dtype, device=device)
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
@@ -1264,7 +1260,7 @@ class PI0FlowMatching(nn.Module):
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
+        suffix_out = suffix_out.to(dtype=self.dtype)
         v_t = self.action_out_proj(suffix_out)
         return v_t
     

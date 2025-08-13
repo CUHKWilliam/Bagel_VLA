@@ -225,7 +225,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         return self.paligemma.get_image_features(image)
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.language_model.embed_tokens(tokens)
+        return self.paligemma.language_model.model.embed_tokens(tokens)
 
     # TODO: break down this huge forward into modules or functions
     def forward(

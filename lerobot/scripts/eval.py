@@ -81,6 +81,7 @@ from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 import cv2
 import libero
+import torch.nn.functional as F
 
 def rollout(
     env,
@@ -533,10 +534,11 @@ def validate_policy(
     raw_observation = {
         "pixels":{
             "image": (batch['observation.images.image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
-            "wrist_image": (batch['observation.images.wrist_image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8),
         },
         "state": np.zeros((8,))
     }
+    if "observation.images.wrist_image" in batch.keys():
+        raw_observation['wrist_image'] = (batch['observation.images.wrist_image'][0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)
 
     observation_predicted_images = []
     observation = preprocess_observation(raw_observation)
@@ -551,7 +553,11 @@ def validate_policy(
     loss, output_dict = policy.forward(batch)
     gt_action = batch['action']
     predicted_action = actions
-    print("validate loss:", loss)
+    print("validate loss:", loss, "sample<->gt loss:", F.mse_loss(gt_action[0][:, :-1], predicted_action[:, :-1]))
+    if torch.cuda.current_device() == 0:
+        import ipdb;ipdb.set_trace()
+    else:
+        while True: pass
 
 
 def _compile_episode_data(

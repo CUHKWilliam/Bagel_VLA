@@ -253,8 +253,13 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"Mixed precision: {accelerator.mixed_precision}")
 
     if cfg.resume:
-        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
-        step = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
+        model_path = cfg.output_dir / "checkpoints" / "pytorch_model.bin"
+        if os.path.exists(model_path):
+            py_ckpt = torch.load(open(model_path, 'rb'))
+            policy.module.load_state_dict(py_ckpt)
+        else:
+            checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+            step = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
 
     
     train_metrics = {
@@ -283,13 +288,12 @@ def train(cfg: TrainPipelineConfig):
             dl_iter = iter(dataloader)
             batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
-        if True:
-            train_tracker, output_dict = update_policy(
+        train_tracker, output_dict = update_policy(
                 train_tracker,
                 policy,
                 batch,
                 accelerator,
-            )
+        )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
@@ -344,20 +348,14 @@ def train(cfg: TrainPipelineConfig):
             dl_iter_val = iter(dataloader)
             val_total_steps = 1
             for val_step in range(val_total_steps):
-                while True:
-                    try:
-                        batch = next(dl_iter)
-                    except StopIteration:
-                        dl_iter = iter(dataloader)
-                        batch = next(dl_iter)          
-                    if batch['task'][0] != "open the bottom drawer of the cabinet":
-                        continue
-                    with torch.no_grad():
-                        val_info = validate_policy(
-                            unwrapped_policy,
-                            batch
-                        )
-                    break
+                batch = next(dl_iter)
+                dl_iter = iter(dataloader)
+                batch = next(dl_iter)          
+                with torch.no_grad():
+                    val_info = validate_policy(
+                        unwrapped_policy,
+                        batch
+                    )
             print("validation end")
             process_index = accelerator.process_index
             num_processes = accelerator.num_processes

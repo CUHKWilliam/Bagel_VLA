@@ -55,12 +55,9 @@ class BagelConfig(PretrainedConfig):
         self.interpolate_pos = interpolate_pos
         self.timestep_shift = timestep_shift
         ## TODO: from openpi zero, for action generation
-        self.n_action_steps = 50
         self.action_dim = 7
-        self.action_horizon = 50
         self.max_action_dim = 32
         self.action_proj_width = 1024
-        self.action_num_steps = 10
         self.mse_weight: float = 1.0
         self.ce_weight: float = 1.0
         self.ce_loss_reweighting: bool = False
@@ -208,7 +205,7 @@ class Bagel(PreTrainedModel):
             self.get_flattened_position_ids = get_flattened_position_ids_extrapolate
         
         self.action_dim = config.action_dim
-        self.action_horizon = config.action_horizon
+        self.action_horizon = config.chunk_size
         self.config = config
         self._init_weights()
 
@@ -1163,7 +1160,6 @@ class Bagel(PreTrainedModel):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
-        n_action_steps = self.config.n_action_steps
         action_token_pos_emb = self.latent_pos_embed(packed_query_position_ids[1:-1] - packed_query_position_ids[1])
         packed_sequence[packed_action_token_indexes] = action_token_pos_emb
         

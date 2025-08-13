@@ -220,6 +220,8 @@ class SiglipFlashAttention2(SiglipAttention):
         query_states = query_states.view(total_q_len, self.num_heads, self.head_dim)
         key_states = key_states.view(total_q_len, self.num_heads, self.head_dim)
         value_states = value_states.view(total_q_len, self.num_heads, self.head_dim)
+        
+        dtype = query_states.dtype
 
         if self.config.rope:
             qh, qw = query_states[:, :, :self.head_dim // 2], query_states[:, :, self.head_dim // 2:] 
@@ -238,7 +240,7 @@ class SiglipFlashAttention2(SiglipAttention):
             max_seqlen_q=max_seqlen,
             max_seqlen_k=max_seqlen,
             causal=False,
-        ).float()
+        ).to(dtype)
         attn_output = self.out_proj(attn_output.reshape(total_q_len, -1))
         return attn_output
 
