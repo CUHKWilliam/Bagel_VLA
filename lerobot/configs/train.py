@@ -39,13 +39,14 @@ class TrainPipelineConfig(HubMixin):
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
-    output_dir: Path | None = Path("outputs/train/LIBERO_merge_bagel2_center")
+    output_dir: Path | None = Path("outputs/train/LIBERO_center")
     job_name: str | None = None
     # Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
     # `dir` is the directory of an existing run with at least one checkpoint in it.
     # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
     # regardless of what's provided with the training command at the time of resumption.
-    resume: bool = True
+    resume: bool = False
+    load_bin: str | None = None
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
@@ -57,12 +58,13 @@ class TrainPipelineConfig(HubMixin):
     log_freq: int = 2
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
-    save_freq: int = 200
+    save_freq: int = 1000
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    n_action_steps: int = 1
 
     def __post_init__(self):
         self.checkpoint_path = None

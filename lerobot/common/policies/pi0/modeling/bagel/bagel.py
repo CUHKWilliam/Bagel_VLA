@@ -205,6 +205,7 @@ class Bagel(PreTrainedModel):
             self.get_flattened_position_ids = get_flattened_position_ids_extrapolate
         
         self.action_dim = config.action_dim
+
         self.action_horizon = config.chunk_size
         self.config = config
         self._init_weights()

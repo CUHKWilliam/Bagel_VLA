@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import time
 from contextlib import nullcontext
@@ -8,7 +23,7 @@ import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
-
+import copy
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
@@ -41,55 +56,21 @@ from accelerate.utils import set_seed as accelerate_set_seed
 import os
 import numpy as np
 import cv2
-from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
-import torch
-import pickle
-
-communication_file = f"/root/Bagel_VLA/outputs/communication0.pkl"
-communication_lock_file = f"/root/Bagel_VLA/outputs/communication_lock0.txt"
-
-open(communication_lock_file, "w").write("0")
-
-def receive():
-    while True:
-        if open(communication_lock_file, "r").read().strip() == "1":
-            data = pickle.load(open(communication_file, "rb"))
-            break
-    return data
-
-def listen_and_process_input(llm_model):
-    data = receive()
-    command = data['command']
-    if command == "generate":
-        print(f"receiving data")
-        data2 = data['params']
-        observation = preprocess_observation(data2)
-        observation = {
-            key: observation[key].cuda().unsqueeze(0) for key in observation
-        }
-        observation['task'] = [data2['task']]
-        action_pred = llm_model.select_action(observation)
-        outputs = action_pred
-        print("outputs:", outputs)
-        print(f"output generated")
-    if command == "reset":
-        llm_model.reset()
-        outputs = "OK"
-    pickle.dump(outputs, open(communication_file, "wb"))
-    open(communication_lock_file, "w").write("0")
-
-
+from lerobot.common.constants import (
+    CHECKPOINTS_DIR,
+    LAST_CHECKPOINT_LINK,
+    PRETRAINED_MODEL_DIR,
+    TRAINING_STATE_DIR,
+    TRAINING_STEP,
+)
 
 @parser.wrap()
-def server_start(cfg: TrainPipelineConfig):
+def convert(cfg: TrainPipelineConfig):
     cfg.resume = True
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
-    if cfg.seed is not None:
-        set_seed(cfg.seed)
-
-    # Initialize accelerator
+   # Initialize accelerator
     from accelerate.utils import DistributedDataParallelKwargs
 
     from lerobot.common.utils.wandb_utils import cfg_to_group, get_wandb_run_id_from_filesystem
@@ -102,40 +83,32 @@ def server_start(cfg: TrainPipelineConfig):
         kwargs_handlers=[ddp_kwargs],
         project_dir=cfg.output_dir,
     )
-    # Setup device - accelerator handles device placement
+   # Setup device - accelerator handles device placement
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Create dataset
     if accelerator.is_main_process:
         logging.info("Creating dataset")
+    dataset = make_dataset(cfg)
 
     if accelerator.is_main_process:
         logging.info("Creating policy")
     cfg.policy.device = "cpu"
-    ds_meta_path = cfg.output_dir / "checkpoints" / "ds_meta.pkl"
-    if os.path.exists(ds_meta_path):
-        ds_meta = pickle.load(open(ds_meta_path, 'rb'))
-    else:
-        dataset = make_dataset(cfg)
-        ds_meta = dataset.meta
-
     policy = make_policy(
         cfg=cfg.policy,
-        ds_meta=ds_meta,
+        ds_meta=dataset.meta,
     ).cpu()
+    torch.cuda.empty_cache()
     
-    model_path = cfg.load_bin
-    py_ckpt = torch.load(open(model_path, 'rb'), map_location="cuda:0")
-    policy.load_state_dict(py_ckpt, strict=True)
+    # Prepare for distributed training
     policy = accelerator.prepare(policy)
+    checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+    policy.load_checkpoint(checkpoint_path / PRETRAINED_MODEL_DIR)
     policy = accelerator.unwrap_model(policy)
-    print('server start')
-    while True:
-        listen_and_process_input(policy)
-
+    if torch.cuda.current_device() == 0:
+        torch.save(policy.state_dict(), open(checkpoint_path / "pytorch_model.bin", 'wb'))
 
 if __name__ == "__main__":
     init_logging()
-    server_start() 
-
+    convert()

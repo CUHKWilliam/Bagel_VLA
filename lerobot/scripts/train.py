@@ -83,7 +83,6 @@ def update_policy(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
-
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
@@ -226,7 +225,12 @@ def train(cfg: TrainPipelineConfig):
             except:
                 return p.numel()
         return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
-   
+    
+    if cfg.load_bin:
+        logging.info(f"load bin:{cfg.load_bin}")
+        model_path = cfg.load_bin
+        py_ckpt = torch.load(open(model_path, 'rb'), map_location="cpu")
+        policy.load_state_dict(py_ckpt, strict=True)
     # Prepare for distributed training
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, 
@@ -251,16 +255,11 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"Number of processes: {accelerator.num_processes}")
         logging.info(f"Device: {accelerator.device}")
         logging.info(f"Mixed precision: {accelerator.mixed_precision}")
+   
 
-    if cfg.resume:
-        model_path = cfg.output_dir / "checkpoints" / "pytorch_model.bin"
-        if os.path.exists(model_path):
-            py_ckpt = torch.load(open(model_path, 'rb'))
-            policy.module.load_state_dict(py_ckpt)
-        else:
-            checkpoint_path = cfg.output_dir / "checkpoints" / "last"
-            step = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
-
+    if not cfg.load_bin and cfg.resume:
+        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+        step = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
     
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f", accelerator),

@@ -644,6 +644,7 @@ class PI0FlowMatching(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        
         self.config = config
         
         llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
@@ -681,46 +682,48 @@ class PI0FlowMatching(nn.Module):
             timestep_shift=training_args.timestep_shift,
         )
         self.bagel_config.chunk_size = config.chunk_size
-        bagel_model = Bagel(
-            language_model, 
-            vit_model if training_args.visual_und else None, 
-            self.bagel_config,
-        )
-        if training_args.visual_und:
-            bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
-        model_state_dict_path = os.path.join(model_args.model_path, "ema.safetensors")
-        model_state_dict = load_file(model_state_dict_path, device="cpu")
-        msg = bagel_model.load_state_dict(model_state_dict, strict=False)
-        print(f"load Bagel: {msg}")
+        self.merge_bagel = False
 
-        tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path)
-        tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
-        self.new_token_ids = new_token_ids
-        if num_new_tokens > 0:
-            bagel_model.language_model.resize_token_embeddings(len(tokenizer))
-            bagel_model.config.llm_config.vocab_size = len(tokenizer)
-            bagel_model.language_model.config.vocab_size = len(tokenizer)
+        if self.merge_bagel:
+            bagel_model = Bagel(
+                language_model, 
+                vit_model if training_args.visual_und else None, 
+                self.bagel_config,
+            )
+            self.bagel_model = bagel_model
+            if training_args.visual_und:
+                bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
+            model_state_dict_path = os.path.join(model_args.model_path, "ema.safetensors")
+            model_state_dict = load_file(model_state_dict_path, device="cpu")
+            msg = bagel_model.load_state_dict(model_state_dict, strict=False)
+            print(f"load Bagel: {msg}")
+
+            tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path)
+            tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
+            self.new_token_ids = new_token_ids
+            if num_new_tokens > 0:
+                bagel_model.language_model.resize_token_embeddings(len(tokenizer))
+                bagel_model.config.llm_config.vocab_size = len(tokenizer)
+                bagel_model.language_model.config.vocab_size = len(tokenizer)
         
-        # maybe freeze something:
-        if training_args.action_gen:
-            for name, param in bagel_model.named_parameters():
-                param.requires_grad = False
+            # maybe freeze something:
+            if training_args.action_gen:
+                for name, param in bagel_model.named_parameters():
+                    param.requires_grad = False
 
-        if training_args.freeze_vae and training_args.visual_gen:
-            for param in vae_model.parameters():
-                param.requires_grad = False
-        self.vae_model = vae_model
-        # if training_args.freeze_llm:
-        #     bagel_model.language_model.eval()
-        #     for param in bagel_model.language_model.parameters():
-        #         param.requires_grad = False
-        if training_args.freeze_vit and training_args.visual_und:
-            bagel_model.vit_model.eval()
-            for param in bagel_model.vit_model.parameters():
-                 param.requires_grad = False
+            if training_args.freeze_vae and training_args.visual_gen:
+                for param in vae_model.parameters():
+                    param.requires_grad = False
+            self.vae_model = vae_model
+            # if training_args.freeze_llm:
+            #     bagel_model.language_model.eval()
+            #     for param in bagel_model.language_model.parameters():
+            #         param.requires_grad = False
+            if training_args.freeze_vit and training_args.visual_und:
+                bagel_model.vit_model.eval()
+                for param in bagel_model.vit_model.parameters():
+                    param.requires_grad = False
         
-
-        self.bagel_model = bagel_model 
 
         ## config for pi0 model
         paligemma_with_export_config = PaliGemmaWithExpertConfig(
@@ -736,42 +739,38 @@ class PI0FlowMatching(nn.Module):
         self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
         self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
-
-        # Setup packed dataloader
-        with open(data_args.dataset_config_file, "r") as stream:
-            dataset_meta = yaml.safe_load(stream)
-        dataset_config = DataConfig(grouped_datasets=dataset_meta)
-        if training_args.visual_und:
-            dataset_config.vit_patch_size = model_args.vit_patch_size
-            dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
-        vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
-        dataset_config.vae_image_downsample = vae_image_downsample
-        dataset_config.max_latent_size = model_args.max_latent_size
-        dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
-        dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
-        dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
-        self.dataset = PackedDataset(
-            dataset_config,
-            tokenizer=tokenizer,
-            special_tokens=new_token_ids,
-            expected_num_tokens=training_args.expected_num_tokens,
-            max_num_tokens_per_sample=data_args.max_num_tokens_per_sample,
-            max_num_tokens=data_args.max_num_tokens,
-            max_buffer_size=data_args.max_buffer_size,
-            prefer_buffer_before=data_args.prefer_buffer_before,
-            interpolate_pos=model_args.interpolate_pos,
-            use_flex=training_args.use_flex,
-            data_status=None,
-            action_dim=self.bagel_model.config.action_dim,
-            action_horizon = self.config.chunk_size,
-            visual_gen=training_args.visual_gen,
-        )
-        self.action_tokenizer = ActionTokenizer(
-            tokenizer=tokenizer,
-        )
+        
+        if self.merge_bagel:
+            # Setup packed dataloader
+            with open(data_args.dataset_config_file, "r") as stream:
+                dataset_meta = yaml.safe_load(stream)
+            dataset_config = DataConfig(grouped_datasets=dataset_meta)
+            if training_args.visual_und:
+                dataset_config.vit_patch_size = model_args.vit_patch_size
+                dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
+            vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
+            dataset_config.vae_image_downsample = vae_image_downsample
+            dataset_config.max_latent_size = model_args.max_latent_size
+            dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
+            dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
+            dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
+            self.dataset = PackedDataset(
+                dataset_config,
+                tokenizer=tokenizer,
+                special_tokens=new_token_ids,
+                expected_num_tokens=training_args.expected_num_tokens,
+                max_num_tokens_per_sample=data_args.max_num_tokens_per_sample,
+                max_num_tokens=data_args.max_num_tokens,
+                max_buffer_size=data_args.max_buffer_size,
+                prefer_buffer_before=data_args.prefer_buffer_before,
+                interpolate_pos=model_args.interpolate_pos,
+                use_flex=training_args.use_flex,
+                data_status=None,
+                action_dim=self.bagel_model.config.action_dim,
+                action_horizon = self.config.chunk_size,
+                visual_gen=training_args.visual_gen,
+            )
         self.set_requires_grad()
-        ##TODO:
-        self.merge_bagel = True
 
 
     def set_requires_grad(self):
@@ -796,18 +795,21 @@ class PI0FlowMatching(nn.Module):
     def embed_prefix(
         self, batch
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        datas = self.dataset(batch)
-        data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
         self.dtype = self.state_proj.weight.dtype
-        batch = autocast(batch, torch.float32, self.dtype)
-        data_batch = autocast(data_batch, torch.float32, self.dtype)
-        if training_args.visual_gen:
-            with torch.no_grad():
-                data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+        if self.merge_bagel:
+            datas = self.dataset(batch)
+            data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+            data_batch = autocast(data_batch, torch.float32, self.dtype)
+            if training_args.visual_gen:
+                with torch.no_grad():
+                    data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+            if "packed_action_tokens" in data_batch.keys():
+                with torch.no_grad():
+                    data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
+        else:
+            data_batch = None
 
-        if "packed_action_tokens" in data_batch.keys():
-            with torch.no_grad():
-                data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
+        batch = autocast(batch, torch.float32, self.dtype)
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
         lang_tokens, lang_masks = self.prepare_language(batch)
@@ -1002,28 +1004,29 @@ class PI0FlowMatching(nn.Module):
         ce = None
         loss_dict = {} 
         loss = torch.tensor(0).float().cuda()
-        if ce is not None:
-            total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
-            if training_args.ce_loss_reweighting:
-                ce = ce * ce_loss_weights
-                total_ce_loss_weights = ce_loss_weights.sum()
-                ce = ce.sum() / total_ce_loss_weights
+        if self.merge_bagel:
+            if ce is not None:
+                total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
+                if training_args.ce_loss_reweighting:
+                    ce = ce * ce_loss_weights
+                    total_ce_loss_weights = ce_loss_weights.sum()
+                    ce = ce.sum() / total_ce_loss_weights
+                else:
+                    ce = ce.sum() / total_ce_tokens
+                loss_dict["ce"] = ce.detach()
+                loss = loss + ce * self.bagel_model.config.ce_weight
             else:
-                ce = ce.sum() / total_ce_tokens
-            loss_dict["ce"] = ce.detach()
-            loss = loss + ce * self.bagel_model.config.ce_weight
-        else:
-            loss_dict["ce"] = torch.tensor(0).cuda()
-            total_ce_tokens = torch.tensor(0).cuda()
+                loss_dict["ce"] = torch.tensor(0).cuda()
+                total_ce_tokens = torch.tensor(0).cuda()
 
-        if self.bagel_model.config.visual_gen:
-            total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
-            mse = mse.mean(dim=-1).sum() / total_mse_tokens
-            loss_dict["mse"] = mse.detach()
-            loss = loss + mse * self.bagel_model.config.mse_weight
-        else:
-            loss_dict["mse"] = torch.tensor(0).cuda()
-            total_mse_tokens = torch.tensor(0).cuda()
+            if self.bagel_model.config.visual_gen:
+                total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
+                mse = mse.mean(dim=-1).sum() / total_mse_tokens
+                loss_dict["mse"] = mse.detach()
+                loss = loss + mse * self.bagel_model.config.mse_weight
+            else:
+                loss_dict["mse"] = torch.tensor(0).cuda()
+                total_mse_tokens = torch.tensor(0).cuda()
 
         action_mse_mean = action_mse.mean()
         loss_dict["action_mse"] = action_mse_mean.detach()
@@ -1035,7 +1038,8 @@ class PI0FlowMatching(nn.Module):
         self.bagel_model.chat(self.tokenizer, )
 
     def sample_actions(self, batch) -> Tensor:
-        device = next(self.bagel_model.parameters()).device
+        self.dtype = self.state_proj.weight.dtype
+        device = torch.cuda.current_device()
         new_token_ids = self.new_token_ids
         if isinstance(new_token_ids, dict):
             for k, v in new_token_ids.items():
@@ -1067,7 +1071,7 @@ class PI0FlowMatching(nn.Module):
             for k, v in generation_input.items():
                 if torch.is_tensor(v):
                     generation_input[k] = v.to(device)
-            generation_input = autocast(generation_input, self.dtype, self.vae_model.encoder.conv_in.weight.dtype)
+            generation_input = autocast(generation_input, torch.float32, self.dtype)
             past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
 
             # add text
