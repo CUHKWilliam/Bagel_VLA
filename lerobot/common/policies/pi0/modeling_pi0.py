@@ -999,6 +999,7 @@ class PI0FlowMatching(nn.Module):
         suffix_out = suffix_out.to(dtype=self.dtype)
         v_t = self.action_out_proj(suffix_out)
         action_mse = F.mse_loss(u_t, v_t, reduction="none")
+        action_mse = action_mse[..., :self.config.max_action_dim]
         
         ## TODO:
         ce = None
