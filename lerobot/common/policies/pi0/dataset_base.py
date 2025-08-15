@@ -366,13 +366,6 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             datas.append(data)
         return datas
     
-    def action_to_text(self, action):
-        action = action[5]
-        action_text = str(action) ## TODO:
-        return action_text
-
-
-
 
 class DataConfig:
     def __init__(

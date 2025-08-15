@@ -127,12 +127,14 @@ def server_start(cfg: TrainPipelineConfig):
     
     model_path = cfg.load_bin
     py_ckpt = torch.load(open(model_path, 'rb'), map_location="cuda:0")
+
     policy.load_state_dict(py_ckpt, strict=True)
     policy = accelerator.prepare(policy)
     policy = accelerator.unwrap_model(policy)
     print('server start')
     while True:
         listen_and_process_input(policy)
+
 
 
 if __name__ == "__main__":

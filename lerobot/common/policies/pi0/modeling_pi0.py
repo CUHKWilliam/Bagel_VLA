@@ -488,7 +488,6 @@ class PI0Policy(PreTrainedPolicy):
         self.unnormalize_outputs = Unnormalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
-
         self.model = PI0FlowMatching(config)
         self.reset()
 
@@ -523,6 +522,10 @@ class PI0Policy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
+        ## TODO: for special case now
+        batch['observation.images.wrist_image'] = batch['observation.images.image'][:, :, :, batch['observation.images.image'].size(-1) // 2:].clone()
+        batch['observation.images.image'] = batch['observation.images.image'][:, :, :, : batch['observation.images.image'].size(-1)].clone()
+
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
@@ -801,7 +804,7 @@ class PI0FlowMatching(nn.Module):
             data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
             data_batch = autocast(data_batch, torch.float32, self.dtype)
             if training_args.visual_gen:
-                with torch.no_grad():
+               with torch.no_grad():
                     data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
             if "packed_action_tokens" in data_batch.keys():
                 with torch.no_grad():
@@ -946,6 +949,7 @@ class PI0FlowMatching(nn.Module):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
+
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
         
         if self.merge_bagel:
@@ -1000,7 +1004,6 @@ class PI0FlowMatching(nn.Module):
         v_t = self.action_out_proj(suffix_out)
         action_mse = F.mse_loss(u_t, v_t, reduction="none")
         action_mse = action_mse[..., :self.config.max_action_dim]
-        
         ## TODO:
         ce = None
         loss_dict = {} 
@@ -1041,15 +1044,15 @@ class PI0FlowMatching(nn.Module):
     def sample_actions(self, batch) -> Tensor:
         self.dtype = self.state_proj.weight.dtype
         device = torch.cuda.current_device()
-        new_token_ids = self.new_token_ids
-        if isinstance(new_token_ids, dict):
-            for k, v in new_token_ids.items():
-                if torch.is_tensor(v):
-                    new_token_ids[k] = v.to(device)
-        elif torch.is_tensor(new_token_ids):
-            new_token_ids = new_token_ids.to(device)
-        
         if self.merge_bagel:
+            new_token_ids = self.new_token_ids
+            if isinstance(new_token_ids, dict):
+                for k, v in new_token_ids.items():
+                    if torch.is_tensor(v):
+                        new_token_ids[k] = v.to(device)
+            elif torch.is_tensor(new_token_ids):
+                new_token_ids = new_token_ids.to(device)
+
             # prefill
             past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
             newlens = [0]
@@ -1207,8 +1210,8 @@ class PI0FlowMatching(nn.Module):
         dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=self.dtype, device=device)
 
-        x_t = noise
         time = torch.tensor(1.0, dtype=self.dtype, device=device)
+        x_t = noise
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
@@ -1220,7 +1223,6 @@ class PI0FlowMatching(nn.Module):
                 bagel_kv_cache,
                 bagel_sample_lens,
             )
-
             # Euler step
             x_t += dt * v_t
             time += dt

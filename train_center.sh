@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=0,1 accelerate launch --config_file accelerate_config.yaml  lerobot/scripts/train.py --policy.path=lerobot/pi0 --dataset.repo_id close_drawer_dataset,stack_boxes_dataset # --load_bin="./outputs/train/LIBERO_merge_bagel2_center/checkpoints/last/pytorch_model.bin"
+CUDA_VISIBLE_DEVICES=0,1 accelerate launch --config_file accelerate_config.yaml  lerobot/scripts/train.py --policy.path=lerobot/pi0 --dataset.repo_id stack_boxes_dataset # --load_bin="./outputs/LIBERO_pretrained.bin"
