@@ -172,3 +172,4 @@ dmypy.json
 cython_debug/
 *.safetensors
 *.json
+*.mp4

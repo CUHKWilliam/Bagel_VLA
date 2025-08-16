@@ -665,7 +665,8 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         
         self.config = config
-        self.merge_bagel = False ## TODO:
+        self.merge_bagel = True ## TODO:
+
         if self.merge_bagel:
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             llm_config.layer_module = model_args.layer_module

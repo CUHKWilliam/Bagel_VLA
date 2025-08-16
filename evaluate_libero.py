@@ -93,7 +93,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
-    policy = PI0Policy.from_pretrained(checkpoint_path / "hf_model2")
+    policy = PI0Policy.from_pretrained(checkpoint_path / "hf_model")
     policy.to('cuda:0')
     policy.eval()
 

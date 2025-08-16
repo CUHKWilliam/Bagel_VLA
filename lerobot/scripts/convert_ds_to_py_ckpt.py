@@ -50,20 +50,19 @@ from lerobot.common.utils.utils import (
 from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.scripts.eval import eval_policy, validate_policy
 from accelerate import Accelerator
 from accelerate.utils import set_seed as accelerate_set_seed
 import os
 import numpy as np
 import cv2
-from lerobot.common.constants import (
+from lerobot.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
-
+from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 @parser.wrap()
 def convert(cfg: TrainPipelineConfig):
     cfg.resume = True
@@ -76,13 +75,8 @@ def convert(cfg: TrainPipelineConfig):
     from lerobot.common.utils.wandb_utils import cfg_to_group, get_wandb_run_id_from_filesystem
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(
-        mixed_precision="no",
-        gradient_accumulation_steps=cfg.policy.gradient_accumulation_steps,
-        log_with="wandb" if cfg.wandb.enable else None,
-        kwargs_handlers=[ddp_kwargs],
-        project_dir=cfg.output_dir,
-    )
+    accelerator = Accelerator()
+
    # Setup device - accelerator handles device placement
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -106,11 +100,17 @@ def convert(cfg: TrainPipelineConfig):
     if torch.cuda.current_device() == 0:
         pickle.dump(dataset.meta, open(meta_path, 'wb'))
     # Prepare for distributed training
+    '''
+    policy = PI0Policy.from_pretrained(checkpoint_path / PRETRAINED_MODEL_DIR)
+    policy = accelerator.prepare(policy)
+    policy.save_checkpoint(checkpoint_path / PRETRAINED_MODEL_DIR)
+    import ipdb;ipdb.set_trace()
+    '''
+
     policy = accelerator.prepare(policy)
     policy.load_checkpoint(checkpoint_path / PRETRAINED_MODEL_DIR)
     policy = accelerator.unwrap_model(policy)
-    if torch.cuda.current_device() == 0:
-        policy.save_pretrained(checkpoint_path / "hf_model", save_function=accelerator.save, is_main_process=accelerator.is_main_process)
+    policy.save_pretrained(checkpoint_path / "hf_model", save_function=accelerator.save, is_main_process=accelerator.is_main_process)
 
 if __name__ == "__main__":
     init_logging()
