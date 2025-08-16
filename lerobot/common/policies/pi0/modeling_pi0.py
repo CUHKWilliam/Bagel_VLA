@@ -510,29 +510,48 @@ class PI0Policy(PreTrainedPolicy):
 
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
-        actions, predicted_images = self.model.sample_actions(batch)
-        original_action_dim = self.config.action_feature.shape[0]
-        actions = actions[:, :, :original_action_dim]
-        actions_gripper = actions[..., -1].clone()
-        actions = self.unnormalize_outputs({"action": actions})["action"]
-        actions[..., -1] = actions_gripper.clone()
-        if self.config.adapt_to_pi_aloha:
-            actions = self._pi_aloha_encode_actions(actions)
-        return actions[0], predicted_images
+
+        batch = self.normalize_inputs(batch)
+
+        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
+        # querying the policy.
+        predicted_images = None
+        if len(self._action_queue) == 0:
+            images, img_masks = self.prepare_images(batch)
+            state = self.prepare_state(batch)
+            lang_tokens, lang_masks = self.prepare_language(batch)
+
+            actions, predicted_images = self.model.sample_actions(
+                images, img_masks, lang_tokens, lang_masks, state, noise=noise
+            )
+
+            # Unpad actions
+            original_action_dim = self.config.action_feature.shape[0]
+            actions = actions[:, :, :original_action_dim]
+
+            actions = self.unnormalize_outputs({"action": actions})["action"]
+
+            if self.config.adapt_to_pi_aloha:
+                actions = self._pi_aloha_encode_actions(actions)
+
+            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+            self._action_queue.extend(actions.transpose(0, 1))
+        return self._action_queue.popleft(), predicted_images
+
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
         ## TODO: for special case now
-        batch['observation.images.wrist_image'] = batch['observation.images.image'][:, :, :, batch['observation.images.image'].size(-1) // 2:].clone()
-        batch['observation.images.image'] = batch['observation.images.image'][:, :, :, : batch['observation.images.image'].size(-1)].clone()
+        # batch['observation.images.wrist_image'] = batch['observation.images.image'][:, :, :, batch['observation.images.image'].size(-1) // 2:].clone()
+        # batch['observation.images.image'] = batch['observation.images.image'][:, :, :, : batch['observation.images.image'].size(-1)].clone()
 
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
-        action = batch['action'].clone()
+        batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
-        batch['action'][..., -1] = action[..., -1].clone()
         loss, loss_dict = self.model.forward(batch, actions, noise, time)
         
         return loss, loss_dict
@@ -649,45 +668,41 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         
         self.config = config
-        
-        llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
-        llm_config.layer_module = model_args.layer_module
-        llm_config.qk_norm = model_args.llm_qk_norm
-        llm_config.tie_word_embeddings = model_args.tie_word_embeddings
-        llm_config.freeze_und = training_args.freeze_und
-        language_model = Qwen2ForCausalLM(llm_config, visual_gen = training_args.visual_gen)
-        
-        if training_args.copy_init_moe:
-            language_model.init_moe()
-
-        if training_args.visual_und:  
-            vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
-            vit_config.num_hidden_layers = vit_config.num_hidden_layers + 1 + model_args.vit_select_layer
-            vit_config.rope = model_args.vit_rope
-            vit_model = SiglipVisionModel(vit_config)
-
-        vae_model, vae_config = load_ae(
-            local_path=os.path.join(model_args.model_path, "ae.safetensors") 
-        )
-        self.vae_config = vae_config
-
-        self.bagel_config = BagelConfig(
-            visual_gen=training_args.visual_gen,
-            visual_und=training_args.visual_und,
-            llm_config=llm_config, 
-            vit_config=vit_config if training_args.visual_und else None,
-            vae_config=vae_config,
-            latent_patch_size=model_args.latent_patch_size,
-            max_latent_size=model_args.max_latent_size,
-            vit_max_num_patch_per_side=model_args.vit_max_num_patch_per_side,
-            connector_act=model_args.connector_act,
-            interpolate_pos=model_args.interpolate_pos,
-            timestep_shift=training_args.timestep_shift,
-        )
-        self.bagel_config.chunk_size = config.chunk_size
-        self.merge_bagel = False
-
+        self.merge_bagel = False ## TODO:
         if self.merge_bagel:
+            llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
+            llm_config.layer_module = model_args.layer_module
+            llm_config.qk_norm = model_args.llm_qk_norm
+            llm_config.tie_word_embeddings = model_args.tie_word_embeddings
+            llm_config.freeze_und = training_args.freeze_und
+            language_model = Qwen2ForCausalLM(llm_config, visual_gen = training_args.visual_gen)
+            if training_args.copy_init_moe:
+                language_model.init_moe()
+            if training_args.visual_und:  
+                vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
+                vit_config.num_hidden_layers = vit_config.num_hidden_layers + 1 + model_args.vit_select_layer
+                vit_config.rope = model_args.vit_rope
+                vit_model = SiglipVisionModel(vit_config)
+
+            vae_model, vae_config = load_ae(
+                local_path=os.path.join(model_args.model_path, "ae.safetensors") 
+            )
+            self.vae_config = vae_config
+
+            self.bagel_config = BagelConfig(
+                visual_gen=training_args.visual_gen,
+                visual_und=training_args.visual_und,
+                llm_config=llm_config, 
+                vit_config=vit_config if training_args.visual_und else None,
+                vae_config=vae_config,
+                latent_patch_size=model_args.latent_patch_size,
+                max_latent_size=model_args.max_latent_size,
+                vit_max_num_patch_per_side=model_args.vit_max_num_patch_per_side,
+                connector_act=model_args.connector_act,
+                interpolate_pos=model_args.interpolate_pos,
+                timestep_shift=training_args.timestep_shift,
+            )
+            self.bagel_config.chunk_size = config.chunk_size
             bagel_model = Bagel(
                 language_model, 
                 vit_model if training_args.visual_und else None, 

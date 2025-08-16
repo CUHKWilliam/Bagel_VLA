@@ -18,7 +18,7 @@ import time
 from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
-
+import pickle
 import torch
 from termcolor import colored
 from torch.amp import GradScaler
@@ -101,9 +101,12 @@ def convert(cfg: TrainPipelineConfig):
     ).cpu()
     torch.cuda.empty_cache()
     
+    checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+    meta_path = checkpoint_path / "meta.pkl"
+    if torch.cuda.current_device() == 0:
+        pickle.dump(dataset.meta, open(meta_path, 'wb'))
     # Prepare for distributed training
     policy = accelerator.prepare(policy)
-    checkpoint_path = cfg.output_dir / "checkpoints" / "last"
     policy.load_checkpoint(checkpoint_path / PRETRAINED_MODEL_DIR)
     policy = accelerator.unwrap_model(policy)
     if torch.cuda.current_device() == 0:

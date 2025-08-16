@@ -17,11 +17,10 @@ import torch
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 from tqdm import tqdm
-from lerobot.configs import parser
+
 from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 from lerobot.common.policies.factory import make_policy
 import pickle
-from lerobot.configs.train import TrainPipelineConfig
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -60,10 +59,16 @@ def invert_gripper_action(action):
     return action
 
 
+@dataclasses.dataclass
 class Args:
     """
     Evaluation arguments for smolVLA on LIBERO.
     """
+
+    # --- Hugging Face arguments ---
+    policy_path: str = "lerobot/pi0"
+    """Path to the pretrained policy on the Hugging Face Hub or local directory."""
+
     # --- LIBERO environment-specific parameters ---
     task_suite_name: str = "libero_spatial"
     """Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90"""
@@ -83,25 +88,23 @@ class Args:
 
     checkpoint_dir: str = None
 
-args = Args()
 
 @parser.wrap()
 def eval_libero(cfg: TrainPipelineConfig) -> None:
-    cfg.validate()
     # Set random seed
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
-    meta = pickle.load(open(os.path.join(checkpoint_path, "meta.pkl"), 'rb'))
+    torch.manual_seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    
+    meta = pickle.load(open(os.path.join(args.checkpoint_dir, "meta.pkl"), 'rb'))
     policy = make_policy(
-        cfg=cfg.policy,
+        cfg=args.policy_path,
         ds_meta=meta,
     ).cuda()
     # policy = PI0Policy.from_pretrained(args.policy_path)
-    state_dict = torch.load(open(os.path.join(checkpoint_path, 'pytorch_model.bin'), 'rb'), map_location="cpu")
+    state_dict = torch.load(open(os.path.join(args.checkpoint_dir, 'pytorch_model.bin'), 'rb'), map_location="cpu")
     policy.load_state_dict(state_dict, strict=False)
 
-    policy.to('cuda:0')
+    policy.to(args.device)
     policy.eval()
 
     # --- Initialize LIBERO task suite ---
@@ -206,7 +209,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     }
                     # Query model to get action
                     with torch.inference_mode():
-                        action_tensor = policy.select_action(observation)[0]
+                        action_tensor = policy.select_action(observation)
                     action = action_tensor.cpu().numpy()[0]
                     # action[-1] = 1 - action[-1]
                     action = normalize_gripper_action(action, binarize=False)

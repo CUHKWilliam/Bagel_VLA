@@ -56,6 +56,7 @@ from accelerate.utils import set_seed as accelerate_set_seed
 import os
 import numpy as np
 import cv2
+from lerobot.configs.train import TrainPipelineConfig
 
 def update_policy(
     train_metrics: MetricsTracker,
