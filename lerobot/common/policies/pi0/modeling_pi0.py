@@ -519,7 +519,7 @@ class PI0Policy(PreTrainedPolicy):
         if len(self._action_queue) == 0:
 
             actions, predicted_images = self.model.sample_actions(
-                batch
+                batch, self.unnoramlize_outputs
             )
 
             # Unpad actions
@@ -549,7 +549,7 @@ class PI0Policy(PreTrainedPolicy):
         loss_dict = {}
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
-        loss, loss_dict = self.model.forward(batch, actions, noise, time)
+        loss, loss_dict = self.model.forward(batch, actions, noise, time, self.unnormalize_outputs)
         
         return loss, loss_dict
 
@@ -809,11 +809,11 @@ class PI0FlowMatching(nn.Module):
         return time.to(dtype=self.dtype, device=device)
 
     def embed_prefix(
-        self, batch
+        self, batch, unnormalize_outputs
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         self.dtype = self.state_proj.weight.dtype
         if self.merge_bagel:
-            datas = self.dataset(batch)
+            datas = self.dataset(unnormalize_outputs(batch))
             data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
             data_batch = autocast(data_batch, torch.float32, self.dtype)
             if training_args.visual_gen:
@@ -946,11 +946,11 @@ class PI0FlowMatching(nn.Module):
 
 
     def forward(
-        self, batch, actions, noise=None, time=None
+        self, batch, actions, noise=None, time=None, unnormalize_outputs=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         data_batch,  prefix_embs, prefix_pad_masks, prefix_att_masks, state  = self.embed_prefix(
-            batch, 
+            batch, unnormalize_outputs
         )
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -1053,7 +1053,7 @@ class PI0FlowMatching(nn.Module):
     def generate_image(self, images, instruction, ):
         self.bagel_model.chat(self.tokenizer, )
 
-    def sample_actions(self, batch) -> Tensor:
+    def sample_actions(self, batch, unnormalize_outputs) -> Tensor:
         self.dtype = self.state_proj.weight.dtype
         device = torch.cuda.current_device()
         if self.merge_bagel:
@@ -1187,7 +1187,7 @@ class PI0FlowMatching(nn.Module):
         noise = self.sample_noise(actions_shape, device)
         
         data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks, state = self.embed_prefix(
-            batch
+            batch, unnormalize_outputs
         )
         if self.merge_bagel:
             bagel_pad_masks = []
