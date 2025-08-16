@@ -110,7 +110,7 @@ def convert(cfg: TrainPipelineConfig):
     policy.load_checkpoint(checkpoint_path / PRETRAINED_MODEL_DIR)
     policy = accelerator.unwrap_model(policy)
     if torch.cuda.current_device() == 0:
-        torch.save(policy.state_dict(), open(checkpoint_path / "pytorch_model.bin", 'wb'))
+        policy.save_pretrained(checkpoint_path / "hf_model", save_function=accelerator.save, is_main_process=accelerator.is_main_process)
 
 if __name__ == "__main__":
     init_logging()

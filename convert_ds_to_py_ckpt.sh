@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=0,1 accelerate launch --config_file accelerate_config.yaml  lerobot/scripts/convert_ds_to_py_ckpt.py --policy.path=lerobot/pi0 --dataset.repo_id stack_boxes_dataset
+CUDA_VISIBLE_DEVICES=0 accelerate launch --config_file accelerate_config.yaml  lerobot/scripts/convert_ds_to_py_ckpt.py --policy.path=lerobot/pi0 --dataset.repo_id=aopolin-lv/libero_spatial_no_noops_lerobot_v21 --policy.repo_id=lerobot/pi0

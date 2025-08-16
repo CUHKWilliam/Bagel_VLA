@@ -517,12 +517,9 @@ class PI0Policy(PreTrainedPolicy):
         # querying the policy.
         predicted_images = None
         if len(self._action_queue) == 0:
-            images, img_masks = self.prepare_images(batch)
-            state = self.prepare_state(batch)
-            lang_tokens, lang_masks = self.prepare_language(batch)
 
             actions, predicted_images = self.model.sample_actions(
-                images, img_masks, lang_tokens, lang_masks, state, noise=noise
+                batch
             )
 
             # Unpad actions
@@ -872,7 +869,6 @@ class PI0FlowMatching(nn.Module):
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
         return data_batch, embs, pad_masks, att_masks, state
 
     def embed_suffix(self, state, noisy_actions, timestep):
@@ -1209,7 +1205,7 @@ class PI0FlowMatching(nn.Module):
         
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
+        
         # Compute image and language key value cache
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks,

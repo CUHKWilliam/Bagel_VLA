@@ -22,6 +22,7 @@ from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 from lerobot.common.policies.factory import make_policy
 import pickle
 from lerobot.configs.train import TrainPipelineConfig
+import time
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -73,7 +74,7 @@ class Args:
     """Number of rollouts per task."""
 
     # --- Evaluation arguments ---
-    video_out_path: str = "eval_videos"
+    video_out_path: str = "./outputs/eval_videos"
     """Path to save videos."""
     device: str = "cuda"
     """Device to use for evaluation."""
@@ -92,15 +93,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
-    meta = pickle.load(open(os.path.join(checkpoint_path, "meta.pkl"), 'rb'))
-    policy = make_policy(
-        cfg=cfg.policy,
-        ds_meta=meta,
-    ).cuda()
-    # policy = PI0Policy.from_pretrained(args.policy_path)
-    state_dict = torch.load(open(os.path.join(checkpoint_path, 'pytorch_model.bin'), 'rb'), map_location="cpu")
-    policy.load_state_dict(state_dict, strict=False)
-
+    policy = PI0Policy.from_pretrained(checkpoint_path / "hf_model2")
     policy.to('cuda:0')
     policy.eval()
 
@@ -159,7 +152,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
 
             # Set initial states
             obs = env.set_init_state(initial_states[episode_idx])
-
+            
             # IMPORTANT: Do nothing for the first few timesteps because the simulator drops objects
             # and we need to wait for them to fall
             for _ in range(args.num_steps_wait):
@@ -205,13 +198,14 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                         "task": [task_description],
                     }
                     # Query model to get action
+                    ts = time.time()
                     with torch.inference_mode():
                         action_tensor = policy.select_action(observation)[0]
                     action = action_tensor.cpu().numpy()[0]
                     # action[-1] = 1 - action[-1]
                     action = normalize_gripper_action(action, binarize=False)
                     action = invert_gripper_action(action)
-
+                    
                     # Execute action in environment
                     obs, _, done, _ = env.step(action)
                     if done:
@@ -219,7 +213,6 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                         total_successes += 1
                         break
                     t += 1
-
                 # except Exception as e:
                 #     logging.error(f"Caught exception: {e}")
                 #     break
@@ -234,12 +227,15 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                 pathlib.Path(args.video_out_path) / f"rollout_task_{task_id}_episode_{episode_idx}_{task_segment}_{suffix}.mp4"
             )
             fps = 30
-            writer = imageio.get_writer(video_path, fps=fps)
+            width, height, _ = frames[0].shape
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer =  cv2.VideoWriter(video_path, fourcc, fps, (width,height)) 
             for image in frames:
-                writer.append_data(image)
-            writer.close()
+                writer.write(image)
+            cv2.destroyAllWindows()
+            writer.release()
             logging.info(f"Saved video to {video_path}")
-            # import ipdb; ipdb.set_trace()
+            import ipdb; ipdb.set_trace()
 
             # Log current results
             logging.info(f"Success: {done}")

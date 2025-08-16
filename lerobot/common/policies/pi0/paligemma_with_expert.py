@@ -91,9 +91,7 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "intermediate_size": 16384,
                     "model_type": "gemma",
                     "num_attention_heads": 8,
-                    ## TODO:
                     "num_hidden_layers": 18,
-                    # "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
@@ -105,8 +103,6 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "model_type": "siglip_vision_model",
                     "num_attention_heads": 16,
                     "num_hidden_layers": 27,
-                    ## TODO:
-                    # "num_hidden_layers": 6,
                     "num_image_tokens": 256,
                     "patch_size": 14,
                     "projection_dim": 2048,
@@ -139,9 +135,7 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 max_position_embeddings=8192,
                 model_type="gemma",
                 num_attention_heads=8,
-                ## TODO:
                 num_hidden_layers=18,
-                # num_hidden_layers=6,
                 num_key_value_heads=1,
                 pad_token_id=0,
                 rms_norm_eps=1e-06,
