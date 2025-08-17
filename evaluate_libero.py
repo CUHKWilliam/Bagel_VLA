@@ -88,6 +88,7 @@ args = Args()
 
 @parser.wrap()
 def eval_libero(cfg: TrainPipelineConfig) -> None:
+    cfg.type = "pi0"
     cfg.resume = True
     cfg.validate()
     # Set random seed
