@@ -70,7 +70,7 @@ class Args:
     """Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90"""
     num_steps_wait: int = 10
     """Number of steps to wait for objects to stabilize in sim."""
-    num_trials_per_task: int = 50
+    num_trials_per_task: int = 1
     """Number of rollouts per task."""
 
     # --- Evaluation arguments ---
@@ -88,12 +88,13 @@ args = Args()
 
 @parser.wrap()
 def eval_libero(cfg: TrainPipelineConfig) -> None:
+    cfg.resume = True
     cfg.validate()
     # Set random seed
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
-    policy = PI0Policy.from_pretrained(checkpoint_path / "hf_model")
+    policy = PI0Policy.from_pretrained(checkpoint_path / "pretrained_model")
     policy.to('cuda:0')
     policy.eval()
 

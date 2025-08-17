@@ -68,6 +68,7 @@ def update_policy(
     device = get_device_from_parameters(policy)
     policy.train()
     loss, output_dict = policy.forward(batch)
+    policy.select_action(batch)
     policy.backward(loss)
     policy.step()
     
@@ -227,11 +228,10 @@ def train(cfg: TrainPipelineConfig):
                 return p.numel()
         return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
     
-    if cfg.load_bin:
-        logging.info(f"load bin:{cfg.load_bin}")
-        model_path = cfg.load_bin
-        py_ckpt = torch.load(open(model_path, 'rb'), map_location="cpu")
-        policy.load_state_dict(py_ckpt, strict=True)
+    if cfg.resume:
+        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+        step, policy = load_training_state(checkpoint_path, policy,)
+    
     # Prepare for distributed training
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, 
@@ -258,10 +258,6 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"Mixed precision: {accelerator.mixed_precision}")
    
 
-    if not cfg.load_bin and cfg.resume:
-        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
-        step = load_training_state(checkpoint_path, policy, optimizer, lr_scheduler)
-    
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f", accelerator),
         "grad_norm": AverageMeter("grdn", ":.3f", accelerator),
@@ -331,6 +327,7 @@ def train(cfg: TrainPipelineConfig):
             save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, policy)
             if accelerator.is_main_process:
                 update_last_checkpoint(checkpoint_dir)
+            import ipdb;ipdb.set_trace()
         
         if cfg.save_checkpoint and is_saving_step:
             accelerator.wait_for_everyone()

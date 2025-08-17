@@ -719,7 +719,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-        try:
+        if True:
             item = self.hf_dataset[idx]
             ep_idx = item["episode_index"].item()
 
@@ -750,8 +750,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             task_idx = item["task_index"].item()
             item["task"] = self.meta.tasks[task_idx]
             return item
-        except:
-            return self.__getitem__(0)
 
     def __repr__(self):
         feature_keys = list(self.features)

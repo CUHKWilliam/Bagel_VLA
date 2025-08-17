@@ -97,7 +97,8 @@ def save_checkpoint(
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
-    policy_.save_checkpoint(pretrained_dir)
+    # policy_.save_checkpoint(pretrained_dir)
+    policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
     save_training_state(checkpoint_dir, step, policy_.optimizer, policy_.lr_scheduler)
 
@@ -125,7 +126,7 @@ def save_training_state(
 
 
 def load_training_state(
-    checkpoint_dir, policy, optimizer: Optimizer, scheduler: LRScheduler | None
+    checkpoint_dir, policy,
 ) -> tuple[int, Optimizer, LRScheduler | None]:
     """
     Loads the training step, optimizer state, scheduler state, and rng state.
@@ -149,8 +150,8 @@ def load_training_state(
         step = 3000
     else:
         step = load_training_step(training_state_dir)
-    policy.load_checkpoint(checkpoint_dir / PRETRAINED_MODEL_DIR )
-    return step
+    policy = policy.from_pretrained(checkpoint_dir / PRETRAINED_MODEL_DIR )
+    return step, policy
 
 
 # Copyright 2025 Bytedance Ltd. and/or its affiliates.

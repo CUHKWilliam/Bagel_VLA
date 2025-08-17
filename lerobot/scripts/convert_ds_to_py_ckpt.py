@@ -108,10 +108,12 @@ def convert(cfg: TrainPipelineConfig):
     '''
 
     policy = accelerator.prepare(policy)
-    policy.load_checkpoint(checkpoint_path / PRETRAINED_MODEL_DIR)
+    policy.load_checkpoint(checkpoint_path / PRETRAINED_MODEL_DIR, )
     policy = accelerator.unwrap_model(policy)
     policy.save_pretrained(checkpoint_path / "hf_model", save_function=accelerator.save, is_main_process=accelerator.is_main_process)
-
+    if torch.cuda.current_device() == 0:
+        policy2 = PI0Policy.from_pretrained(checkpoint_path / 'hf_model')
+        import ipdb;ipdb.set_trace()
 if __name__ == "__main__":
     init_logging()
     convert()

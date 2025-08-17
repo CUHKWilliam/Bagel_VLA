@@ -510,7 +510,7 @@ class PI0Policy(PreTrainedPolicy):
 
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
-
+        
         batch = self.normalize_inputs(batch)
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
@@ -519,7 +519,7 @@ class PI0Policy(PreTrainedPolicy):
         if len(self._action_queue) == 0:
 
             actions, predicted_images = self.model.sample_actions(
-                batch, self.unnoramlize_outputs
+                batch, self.unnormalize_outputs
             )
 
             # Unpad actions
@@ -665,7 +665,8 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         
         self.config = config
-        self.merge_bagel = True ## TODO:
+        self.merge_bagel = False ## TODO
+        self.pi0_keep_ratio = 1.
 
         if self.merge_bagel:
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
@@ -981,7 +982,7 @@ class PI0FlowMatching(nn.Module):
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
             bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
             ## TODO:
-            prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())<0.5, prefix_pad_masks)
+            prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
         
             pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
             att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
@@ -1200,7 +1201,7 @@ class PI0FlowMatching(nn.Module):
             bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
             bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-
+            prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
             prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
             prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
         
