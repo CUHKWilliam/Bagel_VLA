@@ -18,8 +18,8 @@ from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 from tqdm import tqdm
 from lerobot.configs import parser
-from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
-from lerobot.common.policies.factory import make_policy
+from lerobot.policies.pi0.modeling_pi0 import PI0Policy
+from lerobot.policies.factory import make_policy
 import pickle
 from lerobot.configs.train import TrainPipelineConfig
 import time
@@ -74,7 +74,7 @@ class Args:
     """Number of rollouts per task."""
 
     # --- Evaluation arguments ---
-    video_out_path: str = "./outputs/eval_videos"
+    video_out_path: str = "../Bagel_VLA_tmp/outputs/eval_videos"
     """Path to save videos."""
     device: str = "cuda"
     """Device to use for evaluation."""
@@ -202,7 +202,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     # Query model to get action
                     ts = time.time()
                     with torch.inference_mode():
-                        action_tensor = policy.select_action(observation)[0]
+                        action_tensor = policy.select_action(observation)
                     action = action_tensor.cpu().numpy()[0]
                     # action[-1] = 1 - action[-1]
                     action = normalize_gripper_action(action, binarize=False)
@@ -234,7 +234,6 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
             writer =  cv2.VideoWriter(video_path, fourcc, fps, (width,height)) 
             for image in frames:
                 writer.write(image)
-            cv2.destroyAllWindows()
             writer.release()
             logging.info(f"Saved video to {video_path}")
             import ipdb; ipdb.set_trace()

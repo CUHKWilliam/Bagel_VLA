@@ -1,1 +1,1 @@
- python3 evaluate_libero.py --policy.path="outputs/train/openpi_libero/checkpoints/last/pretrained_model" --dataset.repo_id=aopolin-lv/libero_spatial_no_noops_lerobot_v21
+ python3 evaluate_libero.py --policy.path="outputs/train/openpi_libero_debug/checkpoints/last/pretrained_model" --dataset.repo_id=aopolin-lv/libero_spatial_no_noops_lerobot_v21 --policy.repo_id="outputs/train/openpi_libero_debug/checkpoints/last/pretrained_model" --output_dir="./outputs/train/openpi_libero_debug"

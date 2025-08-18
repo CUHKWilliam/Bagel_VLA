@@ -1,0 +1,2 @@
+Requirement already satisfied: opencv-python-headless in /usr/local/lib/python3.10/dist-packages (4.12.0.88)
+Requirement already satisfied: numpy<2.3.0,>=2 in /usr/local/lib/python3.10/dist-packages (from opencv-python-headless) (2.2.6)
