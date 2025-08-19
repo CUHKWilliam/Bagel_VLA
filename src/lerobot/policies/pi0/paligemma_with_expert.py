@@ -170,10 +170,14 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
 class PaliGemmaWithExpertModel(PreTrainedModel):
     config_class = PaliGemmaWithExpertConfig
 
-    def __init__(self, config: PaliGemmaWithExpertConfig):
+    def __init__(self, config: PaliGemmaWithExpertConfig, remove_pi0: bool =  False):
         super().__init__(config=config)
         self.config = config
-        self.paligemma = PaliGemmaForConditionalGeneration(config=config.paligemma_config)
+        self.remove_pi0 = remove_pi0
+        if not remove_pi0:
+            self.paligemma = PaliGemmaForConditionalGeneration(config=config.paligemma_config)
+        else:
+            self.paligemma = None
         self.gemma_expert = GemmaForCausalLM(config=config.gemma_expert_config)
         # Remove unused embed_tokens
         self.gemma_expert.model.embed_tokens = None
@@ -182,12 +186,12 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         self.set_requires_grad()
 
     def set_requires_grad(self):
-        if self.config.freeze_vision_encoder:
+        if self.config.freeze_vision_encoder and not self.remove_pi0:
             self.paligemma.vision_tower.eval()
             for params in self.paligemma.vision_tower.parameters():
                 params.requires_grad = False
 
-        if self.config.train_expert_only:
+        if self.config.train_expert_only and not self.remove_pi0:
             self.paligemma.eval()
             for params in self.paligemma.parameters():
                 params.requires_grad = False
@@ -236,7 +240,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         bagel_kv_cache=None,
         bagel_sample_lens=None,
     ):
-        models = [self.paligemma.language_model, self.gemma_expert.model]
+        if not self.remove_pi0:
+            models = [self.paligemma.language_model, self.gemma_expert.model]
+        else:
+            models = [None, self.gemma_expert.model]
 
         for hidden_states in inputs_embeds:
             # TODO this is very inefficient

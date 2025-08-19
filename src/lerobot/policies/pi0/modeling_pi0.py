@@ -479,6 +479,7 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
+        self.remove_pi0 = config.remove_pi0 if config.remove_pi0 is not None else False
         self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
@@ -486,10 +487,9 @@ class PI0Policy(PreTrainedPolicy):
         self.unnormalize_outputs = Unnormalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
-
-        self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        if not self.remove_pi0:
+            self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
-
         self.reset()
 
     def reset(self):
@@ -532,9 +532,12 @@ class PI0Policy(PreTrainedPolicy):
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            images, img_masks = self.prepare_images(batch)
+            if not self.remove_pi0:
+                images, img_masks = self.prepare_images(batch)
+                lang_tokens, lang_masks = self.prepare_language(batch)
+            else:
+                images, img_masks, lang_tokens, lang_masks = None, None, None, None
             state = self.prepare_state(batch)
-            lang_tokens, lang_masks = self.prepare_language(batch)
 
             actions = self.model.sample_actions(
                 images, img_masks, lang_tokens, lang_masks, state, noise=noise, batch=batch, unnormalize_outputs=self.unnormalize_outputs
@@ -562,10 +565,14 @@ class PI0Policy(PreTrainedPolicy):
 
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
-
-        images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens, lang_masks = self.prepare_language(batch)
+
+        if not self.remove_pi0:
+            images, img_masks = self.prepare_images(batch)
+            lang_tokens, lang_masks = self.prepare_language(batch)
+        else:
+            images, img_masks, lang_tokens, lang_masks = None, None, None
+
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
@@ -720,11 +727,13 @@ class PI0FlowMatching(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        ## TODO:
-        self.merge_bagel = True
-        self.pi0_keep_ratio = 1.
+        
+        self.merge_bagel = config.merge_bagel if config.merge_bagel is not None else False
+        self.pi0_keep_ratio = config.pi0_keep_ratio if config.pi0_keep_ratio is not None else False
+        self.remove_pi0 = config.remove_pi0 if config.remove_pi0 is not None else False
 
         if self.merge_bagel:
+            assert self.pi0_keep_ratio is not None
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             llm_config.layer_module = model_args.layer_module
             llm_config.qk_norm = model_args.llm_qk_norm
@@ -827,23 +836,23 @@ class PI0FlowMatching(nn.Module):
                 visual_gen=training_args.visual_gen,
             )
          
-
         paligemma_with_export_config = PaliGemmaWithExpertConfig(
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
             attention_implementation=self.config.attention_implementation,
+            self.remove_pi0,
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config).float().cuda()
 
         # Projections are float32
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
 
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
         self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
-
         self.set_requires_grad()
+        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
+        self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
+
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -884,7 +893,8 @@ class PI0FlowMatching(nn.Module):
         else:
             data_batch = None
 
-
+        if self.remove_pi0:
+            return data_batch, None, None, None
         # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
         embs = []
         pad_masks = []
@@ -1016,17 +1026,21 @@ class PI0FlowMatching(nn.Module):
                 bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
             bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            ## TODO:
-            prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
-            bagel_pad_masks =  torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda())< (1 - self.pi0_keep_ratio ), bagel_pad_masks)
+
+            if not self.remove_pi0:
+                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
+                bagel_pad_masks =  torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda())< (1 - self.pi0_keep_ratio ), bagel_pad_masks)
             
-            position_ids =  torch.cumsum(torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
-            bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-            position_ids = [bagel_position_ids, position_ids]
+                position_ids =  torch.cumsum(torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
+                bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
+                position_ids = [bagel_position_ids, position_ids]
 
-            pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
-            att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
-
+                pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
+                att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
+            else:
+                position_ids = torch.cumsum(suffix_pad_masks, dim=1) - 1
+                pad_masks = torch.cat([bagel_pad_masks, suffix_pad_masks], dim=1)
+                att_masks = torch.cat([bagel_att_masks, suffix_att_masks], dim=1)
         else: 
             pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
             att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
@@ -1238,17 +1252,23 @@ class PI0FlowMatching(nn.Module):
             bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
             bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
-            bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks)
-            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks)
+            if not self.remove_pi0:
+                bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks)
+                bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks)
 
-            prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-            bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-            prefix_position_ids = [bagel_position_ids, prefix_position_ids]
+                prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+                bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
+                prefix_position_ids = [bagel_position_ids, prefix_position_ids]
 
-            prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
-            prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
-            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+                prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
+                prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
+                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+            else:
+                prefix_positoin_ids = bagel_position_ids
+                prefix_pad_masks = bagel_pad_masks
+                prefix_att_masks = bagel_att_masks
+                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         else:
             prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
             prefix_offsets = None
