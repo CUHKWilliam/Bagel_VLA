@@ -301,18 +301,26 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     batch_bagel_value_state.append(bagel_value_state)
                     curr_len += bagel_sample_lens[batch_id]
                 batch_bagel_key_state, batch_bagel_query_state, batch_bagel_value_state = torch.stack(batch_bagel_key_state, dim=0), torch.stack(batch_bagel_query_state, dim=0), torch.stack(batch_bagel_value_state, dim=0)
-                query_states = [batch_bagel_query_state] + query_states
-                key_states = [batch_bagel_key_state] + key_states
-                value_states = [batch_bagel_value_state] + value_states
 
             # B,L,H,D with L sequence length, H number of heads, D head dim
             # concatenate on the number of embeddings/tokens
             query_states = torch.cat(query_states, dim=1)
             key_states = torch.cat(key_states, dim=1)
             value_states = torch.cat(value_states, dim=1)
+            
+            if isinstance(position_ids, list):
+                query_states = apply_rope(query_states, position_ids[-1])
+                key_states = apply_rope(key_states, position_ids[-1])
+            else:
+                query_states = apply_rope(query_states, position_ids)
+                key_states = apply_rope(key_states, position_ids)
 
-            query_states = apply_rope(query_states, position_ids)
-            key_states = apply_rope(key_states, position_ids)
+            if bagel_kv_cache is not None:
+                batch_bagel_query_state = apply_rope(batch_bagel_query_state, position_ids[0])
+                batch_bagel_key_state = apply_rope(batch_bagel_key_state, position_ids[0])
+                query_states = torch.cat([batch_bagel_query_state, query_states], dim=1)
+                key_states = torch.cat([batch_bagel_key_state, key_states], dim=1)
+                value_states = torch.cat([batch_bagel_value_state, value_states], dim=1)
 
             if use_cache and past_key_values is None:
                 past_key_values = {}
@@ -341,7 +349,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
             # first part of att_output is prefix (up to sequence length, [:, 0:prefix_seq_len])
             outputs_embeds = []
-            start = 0
+            if bagel_kv_cache is None:
+                start = 0
+            else:
+                start =  batch_bagel_key_state.size(1)
             for i, hidden_states in enumerate(inputs_embeds):
                 if hasattr(models[i], "model"):
                     layer = models[i].model.layers[layer_idx]

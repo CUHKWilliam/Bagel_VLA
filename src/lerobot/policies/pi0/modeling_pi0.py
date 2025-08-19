@@ -721,7 +721,7 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         self.config = config
         ## TODO:
-        self.merge_bagel = False
+        self.merge_bagel = True
         self.pi0_keep_ratio = 1.
 
         if self.merge_bagel:
@@ -1018,16 +1018,23 @@ class PI0FlowMatching(nn.Module):
             bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
             ## TODO:
             prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
-        
+            bagel_pad_masks =  torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda())< (1 - self.pi0_keep_ratio ), bagel_pad_masks)
+            
+            position_ids =  torch.cumsum(torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
+            bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
+            position_ids = [bagel_position_ids, position_ids]
+
             pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
             att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
+
         else: 
             pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
             att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+            position_ids =  torch.cumsum(pad_masks, dim=1) - 1
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
         
+
         if self.merge_bagel:
             bagel_kv_cache = ret['past_key_values']
             bagel_sample_lens = data_batch['sample_lens']
@@ -1211,8 +1218,8 @@ class PI0FlowMatching(nn.Module):
             predict_images = None
         
 
-        bsize = state.shape[0]
-        device = state.device
+        bsize = 1
+        device = "cuda"
 
         if noise is None:
             actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
@@ -1220,8 +1227,33 @@ class PI0FlowMatching(nn.Module):
         data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
         )
+
+        if self.merge_bagel:
+            bagel_pad_masks = []
+            bagel_att_masks = []
+            batch_id = 0
+            max_sample_lens = newlens[-1]
+            bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
+            bagel_pad_masks.append(bagel_pad_mask)
+            bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
+            bagel_att_masks.append(bagel_att_mask)
+            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
+            bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks)
+            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+            prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks)
+
+            prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+            bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
+            prefix_position_ids = [bagel_position_ids, prefix_position_ids]
+
+            prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
+            prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
+            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        else:
+            prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+            prefix_offsets = None
+
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
         
         # Compute image and language key value cache
         _, past_key_values = self.paligemma_with_expert.forward(
@@ -1249,6 +1281,7 @@ class PI0FlowMatching(nn.Module):
                 expanded_time,
                 bagel_kv_cache,
                 bagel_sample_lens,
+                prefix_offsets,
             )
 
             # Euler step
@@ -1265,7 +1298,7 @@ class PI0FlowMatching(nn.Module):
         timestep,
         bagel_kv_cache,
         bagel_sample_lens,
-           
+        prefix_offsets,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, timestep)
@@ -1279,7 +1312,9 @@ class PI0FlowMatching(nn.Module):
 
         full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
 
-        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        if prefix_offsets is None:
+            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
         outputs_embeds, _ = self.paligemma_with_expert.forward(
