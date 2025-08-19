@@ -1,1 +1,0 @@
-CUDA_VISIBLE_DEVICES=0,1 accelerate launch --config_file accelerate_config.yaml  lerobot/scripts/convert_ds_to_py_ckpt.py --policy.path="outputs/train/openpi_libero_debug/checkpoints/last/hf_model" --dataset.repo_id=aopolin-lv/libero_spatial_no_noops_lerobot_v21 

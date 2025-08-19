@@ -186,12 +186,12 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         self.set_requires_grad()
 
     def set_requires_grad(self):
-        if self.config.freeze_vision_encoder and not self.remove_pi0:
+        if not self.remove_pi0 and self.config.freeze_vision_encoder:
             self.paligemma.vision_tower.eval()
             for params in self.paligemma.vision_tower.parameters():
                 params.requires_grad = False
 
-        if self.config.train_expert_only and not self.remove_pi0:
+        if not self.remove_pi0 and self.config.train_expert_only:
             self.paligemma.eval()
             for params in self.paligemma.parameters():
                 params.requires_grad = False
@@ -199,10 +199,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
     def train(self, mode: bool = True):
         super().train(mode)
 
-        if self.config.freeze_vision_encoder:
+        if not self.remove_pi0 and self.config.freeze_vision_encoder:
             self.paligemma.vision_tower.eval()
 
-        if self.config.train_expert_only:
+        if not self.remove_pi0 and self.config.train_expert_only:
             self.paligemma.eval()
 
     def to_bfloat16_like_physical_intelligence(self):
@@ -252,10 +252,13 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             if hidden_states is None:
                 continue
             batch_size = hidden_states.shape[0]
+        
+        if bagel_kv_cache is not None:
+            batch_size = len(bagel_sample_lens)  - 1
 
         # RMSNorm
-        num_layers = self.paligemma.config.text_config.num_hidden_layers
-        head_dim = self.paligemma.config.text_config.head_dim
+        num_layers = self.config.paligemma_config.text_config.num_hidden_layers
+        head_dim = self.config.paligemma_config.text_config.head_dim
         for layer_idx in range(num_layers):
             query_states = []
             key_states = []
@@ -311,23 +314,29 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
             # B,L,H,D with L sequence length, H number of heads, D head dim
             # concatenate on the number of embeddings/tokens
-            query_states = torch.cat(query_states, dim=1)
-            key_states = torch.cat(key_states, dim=1)
-            value_states = torch.cat(value_states, dim=1)
-            
-            if isinstance(position_ids, list):
-                query_states = apply_rope(query_states, position_ids[-1])
-                key_states = apply_rope(key_states, position_ids[-1])
-            else:
-                query_states = apply_rope(query_states, position_ids)
-                key_states = apply_rope(key_states, position_ids)
+            if len(query_states) > 0:
+                query_states = torch.cat(query_states, dim=1)
+                key_states = torch.cat(key_states, dim=1)
+                value_states = torch.cat(value_states, dim=1)
+
+                if isinstance(position_ids, list):
+                    query_states = apply_rope(query_states, position_ids[-1])
+                    key_states = apply_rope(key_states, position_ids[-1])
+                else:
+                    query_states = apply_rope(query_states, position_ids)
+                    key_states = apply_rope(key_states, position_ids)
 
             if bagel_kv_cache is not None:
                 batch_bagel_query_state = apply_rope(batch_bagel_query_state, position_ids[0])
                 batch_bagel_key_state = apply_rope(batch_bagel_key_state, position_ids[0])
-                query_states = torch.cat([batch_bagel_query_state, query_states], dim=1)
-                key_states = torch.cat([batch_bagel_key_state, key_states], dim=1)
-                value_states = torch.cat([batch_bagel_value_state, value_states], dim=1)
+                if len(query_states) > 0:
+                    query_states = torch.cat([batch_bagel_query_state, query_states], dim=1)
+                    key_states = torch.cat([batch_bagel_key_state, key_states], dim=1)
+                    value_states = torch.cat([batch_bagel_value_state, value_states], dim=1)
+                else:
+                    query_states = batch_bagel_query_state
+                    key_states = batch_bagel_key_state
+                    value_states = batch_bagel_value_state
 
             if use_cache and past_key_values is None:
                 past_key_values = {}
@@ -361,6 +370,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             else:
                 start =  batch_bagel_key_state.size(1)
             for i, hidden_states in enumerate(inputs_embeds):
+                if models[i] is None:
+                    outputs_embeds.append(None)
+                    continue
                 if hasattr(models[i], "model"):
                     layer = models[i].model.layers[layer_idx]
                 else:
@@ -398,6 +410,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         # final norm
         outputs_embeds = []
         for i, hidden_states in enumerate(inputs_embeds):
+            if models[i] is None:
+                outputs_embeds.append(None)
+                continue
             if hidden_states is not None:
                 if hasattr(models[i], "model"):
                     out_emb = models[i].model.norm(hidden_states)

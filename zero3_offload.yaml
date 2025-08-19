@@ -26,7 +26,7 @@
             "warmup_min_lr": 2.5e-6,
             "warmup_max_lr": 5e-5,
             "warmup_num_steps": 20,
-            "total_num_steps": 200000
+            "total_num_steps": 60000
         }
     },
     "zero_optimization": {
