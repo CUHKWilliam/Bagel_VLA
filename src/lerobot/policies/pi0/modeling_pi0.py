@@ -788,10 +788,10 @@ class PI0FlowMatching(nn.Module):
                 bagel_model.config.llm_config.vocab_size = len(tokenizer)
                 bagel_model.language_model.config.vocab_size = len(tokenizer)
         
-            # maybe freeze something:
+            # TODO: fix bagel
             if training_args.action_gen:
                 for name, param in bagel_model.named_parameters():
-                    param.requires_grad = False
+                    param.requires_grad = True
 
             if training_args.freeze_vae and training_args.visual_gen:
                 for param in vae_model.parameters():
@@ -801,6 +801,7 @@ class PI0FlowMatching(nn.Module):
             #     bagel_model.language_model.eval()
             #     for param in bagel_model.language_model.parameters():
             #         param.requires_grad = False
+
             if training_args.freeze_vit and training_args.visual_und:
                 bagel_model.vit_model.eval()
                 for param in bagel_model.vit_model.parameters():
@@ -880,6 +881,8 @@ class PI0FlowMatching(nn.Module):
         for PaliGemma transformer processing.
         """
         self.dtype = self.state_proj.weight.dtype
+        self.paligemma_with_expert = self.paligemma_with_expert.to(self.dtype)
+
         if self.merge_bagel:
             datas = self.dataset(unnormalize_outputs(batch))
             data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
@@ -996,6 +999,10 @@ class PI0FlowMatching(nn.Module):
         self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None, unnormalize_outputs=None, batch=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+        if torch.cuda.current_device() == 0:
+            import ipdb;ipdb.set_trace()
+        else:
+            while True: pass
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -1005,10 +1012,13 @@ class PI0FlowMatching(nn.Module):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-
+    
         data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
         )
+        state = state.to(self.dtype)
+        x_t = x_t.to(self.dtype)
+        time = time.to(self.dtype)
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
         if self.merge_bagel:
             past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
@@ -1029,7 +1039,7 @@ class PI0FlowMatching(nn.Module):
 
             if not self.remove_pi0:
                 prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
-                bagel_pad_masks =  torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda())< (1 - self.pi0_keep_ratio ), bagel_pad_masks)
+               #  bagel_pad_masks =  torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda())< (1 - self.pi0_keep_ratio ), bagel_pad_masks) ## TODO;
             
                 position_ids =  torch.cumsum(torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
                 bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
@@ -1071,10 +1081,10 @@ class PI0FlowMatching(nn.Module):
         )
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         # Original openpi code, upcast attention output
-        suffix_out = suffix_out.to(dtype=torch.float32)
+        suffix_out = suffix_out.to(dtype=self.dtype)
         v_t = self.action_out_proj(suffix_out)
-
-        action_losses = F.mse_loss(u_t, v_t, reduction="none")
+        
+        action_losses = F.mse_loss(u_t.float(), v_t.float(), reduction="none")
         ## TODO:
         ce = None
         loss_dict = {} 
@@ -1109,6 +1119,7 @@ class PI0FlowMatching(nn.Module):
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         self.dtype = self.state_proj.weight.dtype
         device = torch.cuda.current_device()
+        '''
         if self.merge_bagel:
             new_token_ids = self.new_token_ids
             if isinstance(new_token_ids, dict):
@@ -1232,7 +1243,35 @@ class PI0FlowMatching(nn.Module):
             bagel_kv_cache = None
             bagel_sample_lens = None
             predict_images = None
-        
+        '''
+
+        #################
+        if self.merge_bagel:
+            self.bagel_model.train()
+            data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(                                                                                                                                                                                                                                                                              images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
+            )
+            past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+            ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
+            sample_lens = data_batch['sample_lens'][:-1]
+            max_sample_lens = max(sample_lens)
+            bagel_pad_masks = []
+            bagel_att_masks = []
+            for batch_id in range(len(sample_lens)):
+                bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
+                bagel_pad_mask[sample_lens[batch_id]:] = 0
+                bagel_pad_masks.append(bagel_pad_mask)
+                bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
+                bagel_att_masks.append(bagel_att_mask)
+            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
+            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+            bagel_kv_cache = ret['past_key_values']
+            bagel_sample_lens = data_batch['sample_lens']
+        else:
+            bagel_kv_cache = None
+            bagel_sample_lens = None
+            predict_images = None 
+        ################
+
 
         bsize = 1
         device = "cuda"
@@ -1245,6 +1284,7 @@ class PI0FlowMatching(nn.Module):
         )
 
         if self.merge_bagel:
+            '''
             bagel_pad_masks = []
             bagel_att_masks = []
             batch_id = 0
@@ -1255,9 +1295,10 @@ class PI0FlowMatching(nn.Module):
             bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
             bagel_att_masks = bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+            '''
             if not self.remove_pi0:
-                bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks)
-                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks)
+               #  bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks) ##TODO:
+                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks) 
 
                 prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
                 bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1

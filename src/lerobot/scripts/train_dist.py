@@ -129,12 +129,10 @@ def train(cfg: TrainPipelineConfig):
                 "save_code": False,
                 "job_type": "train_eval",
                 "mode": cfg.wandb.mode if cfg.wandb.mode in ["online", "offline", "disabled"] else "online",
-                # "resume": "must" if cfg.resume else None,
-                "resume": None,
-                "id": None,
-                # "id": cfg.wandb.run_id
-                # if cfg.wandb.run_id
-                # else (get_wandb_run_id_from_filesystem(cfg.output_dir) if cfg.resume else None),
+                "resume": "must" if cfg.resume else None,
+                "id": cfg.wandb.run_id
+                if cfg.wandb.run_id
+                else (get_wandb_run_id_from_filesystem(cfg.output_dir) if cfg.resume else None),
             }
         },
     )
@@ -264,7 +262,6 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"Device: {accelerator.device}")
         logging.info(f"Mixed precision: {accelerator.mixed_precision}")
    
-
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),

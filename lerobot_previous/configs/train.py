@@ -39,7 +39,7 @@ class TrainPipelineConfig(HubMixin):
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
-    output_dir: Path | None = Path("outputs/train/openpi_libero")
+    output_dir: Path | None = Path("/root/docker_shared/outputs/train/openpi_libero")
     job_name: str | None = None
     # Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure
     # `dir` is the directory of an existing run with at least one checkpoint in it.

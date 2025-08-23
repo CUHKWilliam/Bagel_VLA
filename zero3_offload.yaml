@@ -9,7 +9,7 @@
         "min_loss_scale": 1
     },
     "bf16": {
-        "enabled": false
+        "enabled": true
     },
     "optimizer": {
         "type": "AdamW",
@@ -23,7 +23,7 @@
     "scheduler": {
         "type": "WarmupDecayLR",
         "params": {
-            "warmup_min_lr": 2.5e-6,
+            "warmup_min_lr": 1e-6,
             "warmup_max_lr": 5e-5,
             "warmup_num_steps": 20,
             "total_num_steps": 60000

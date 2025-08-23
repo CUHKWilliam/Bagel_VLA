@@ -70,11 +70,11 @@ class Args:
     """Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90"""
     num_steps_wait: int = 10
     """Number of steps to wait for objects to stabilize in sim."""
-    num_trials_per_task: int = 1
+    num_trials_per_task: int = 20
     """Number of rollouts per task."""
 
     # --- Evaluation arguments ---
-    video_out_path: str = "../Bagel_VLA_tmp/outputs/eval_videos"
+    video_out_path: str = "../docker_shared/outputs/bagel_lerobot_train-bagel2_eval_videos_debug"
     """Path to save videos."""
     device: str = "cuda"
     """Device to use for evaluation."""
@@ -236,7 +236,6 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                 writer.write(image)
             writer.release()
             logging.info(f"Saved video to {video_path}")
-            import ipdb; ipdb.set_trace()
 
             # Log current results
             logging.info(f"Success: {done}")
