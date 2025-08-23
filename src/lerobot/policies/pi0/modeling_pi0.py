@@ -836,7 +836,7 @@ class PI0FlowMatching(nn.Module):
                 action_horizon = self.config.chunk_size,
                 visual_gen=training_args.visual_gen,
             )
-         
+        
         paligemma_with_export_config = PaliGemmaWithExpertConfig(
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
@@ -999,10 +999,6 @@ class PI0FlowMatching(nn.Module):
         self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None, unnormalize_outputs=None, batch=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        if torch.cuda.current_device() == 0:
-            import ipdb;ipdb.set_trace()
-        else:
-            while True: pass
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -1303,16 +1299,16 @@ class PI0FlowMatching(nn.Module):
                 prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
                 bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
                 prefix_position_ids = [bagel_position_ids, prefix_position_ids]
-
+                
+                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
                 prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
                 prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
-                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
             else:
                 bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
                 prefix_position_ids = [bagel_position_ids, None]
                 prefix_pad_masks = bagel_pad_masks
                 prefix_att_masks = bagel_att_masks
-                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None] * 0
         else:
             prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
             prefix_offsets = None

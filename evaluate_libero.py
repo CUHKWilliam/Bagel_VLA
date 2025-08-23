@@ -74,7 +74,7 @@ class Args:
     """Number of rollouts per task."""
 
     # --- Evaluation arguments ---
-    video_out_path: str = "../docker_shared/outputs/bagel_lerobot_train-bagel2_eval_videos_debug"
+    video_out_path: str = "../docker_shared/outputs/bagel_openpi_lerobot_train-bagel_fix-pi0_eval_videos"
     """Path to save videos."""
     device: str = "cuda"
     """Device to use for evaluation."""

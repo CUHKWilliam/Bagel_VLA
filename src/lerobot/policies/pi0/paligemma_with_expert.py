@@ -190,8 +190,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             self.paligemma.vision_tower.eval()
             for params in self.paligemma.vision_tower.parameters():
                 params.requires_grad = False
-
-        if not self.remove_pi0 and self.config.train_expert_only:
+        
+        # if not self.remove_pi0 and self.config.train_expert_only: ##TODO:
+        if True:
             self.paligemma.eval()
             for params in self.paligemma.parameters():
                 params.requires_grad = False
