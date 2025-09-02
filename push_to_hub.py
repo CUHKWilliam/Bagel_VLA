@@ -8,7 +8,8 @@ import logging
 import math
 import pathlib
 import os
-
+os.environ['HTTP_PROXY'] = 'http://183.174.229.166:10888'
+os.environ['HTTPS_PROXY'] = 'http://183.174.229.166:10888'
 import cv2
 import draccus
 import imageio
@@ -96,7 +97,7 @@ def push_to_hub(cfg: TrainPipelineConfig) -> None:
     np.random.seed(args.seed)
     checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
     policy = PI0Policy.from_pretrained(checkpoint_path / "pretrained_model")
-    policy.push_to_hub("CUHKWilliam/openpi_libero_step-20k")
+    policy.push_to_hub("CUHKWilliam/openpi_libero_step-30k")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

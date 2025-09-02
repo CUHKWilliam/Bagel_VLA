@@ -257,12 +257,12 @@ class TrainingArguments:
         metadata={"help": "Keep language-model weights fixed (no gradient updates)."}
     )
     freeze_vit: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Keep ViT weights fixed during training."}
     )
     freeze_vae: bool = field(
         default=True,
-        metadata={"help": "Keep VAE weights fixed; only predict latents, don’t fine-tune encoder/decoder."}
+        metadata={"help": "Keep VAE weights fixed; only predict latents, dont fine-tune encoder/decoder."}
     )
     freeze_und: bool = field(
         default=False,
@@ -554,7 +554,8 @@ class PI0Policy(PreTrainedPolicy):
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._action_queue.extend(actions.transpose(0, 1))
+            ## TODO:
+            self._action_queue.extend(actions.transpose(0, 1))# [:10])
         return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
@@ -577,24 +578,24 @@ class PI0Policy(PreTrainedPolicy):
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time, unnormalize_outputs=self.unnormalize_outputs, batch=batch)
-        loss_dict["losses_after_forward"] = losses.clone()
+        loss_dict, losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time, unnormalize_outputs=self.unnormalize_outputs, batch=batch)
+        
+        action_mse = loss_dict['action_mse'].clone()
 
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
-            losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
+            action_mse = action_mse * in_episode_bound.unsqueeze(-1)
 
         # Remove padding
-        losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone()
+        action_mse = action_mse[:, :, : self.config.max_action_dim]
 
         # For backward pass
-        loss = losses.mean()
+        action_mse = action_mse.mean()
+        loss_dict['action_mse'] = action_mse.clone().detach()
         # For logging
-        loss_dict["l2_loss"] = loss.item()
-
-        return loss, loss_dict
+        losses += action_mse
+        
+        return losses, loss_dict
 
     def prepare_images(self, batch):
         """Apply Pi0 preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
@@ -837,15 +838,14 @@ class PI0FlowMatching(nn.Module):
                 visual_gen=training_args.visual_gen,
             )
         
-        paligemma_with_export_config = PaliGemmaWithExpertConfig(
-            freeze_vision_encoder=self.config.freeze_vision_encoder,
-            train_expert_only=self.config.train_expert_only,
-            attention_implementation=self.config.attention_implementation,
-            remove_pi0=self.remove_pi0,
+        paligemma_with_expert_config = PaliGemmaWithExpertConfig(
+            freeze_vision_encoder = self.config.freeze_vision_encoder,
+            train_expert_only = self.config.train_expert_only,
+            attention_implementation = self.config.attention_implementation,
+            remove_pi0 = self.remove_pi0
         )
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config, self.remove_pi0).float().cuda()
+        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_expert_config, self.remove_pi0).float().cuda()
 
-        # Projections are float32
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
 
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
@@ -1018,8 +1018,9 @@ class PI0FlowMatching(nn.Module):
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
         if self.merge_bagel:
             past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
-            ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
-    
+            if self.bagel_model.config.visual_gen:
+                visual_gen_complete = np.random.rand() < 0.5
+            ret = self.bagel_model(**data_batch, past_key_values=past_key_values, visual_gen_complete=visual_gen_complete)
             sample_lens = data_batch['sample_lens'][:-1]
             max_sample_lens = max(sample_lens)
             bagel_pad_masks = []
@@ -1035,18 +1036,11 @@ class PI0FlowMatching(nn.Module):
 
             if not self.remove_pi0:
                 prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
-               #  bagel_pad_masks =  torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda())< (1 - self.pi0_keep_ratio ), bagel_pad_masks) ## TODO;
-            
-                position_ids =  torch.cumsum(torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
-                bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-                position_ids = [bagel_position_ids, position_ids]
-
+                position_ids =  torch.cumsum(torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
                 pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
                 att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
             else:
-                bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-                position_ids =  torch.cumsum(suffix_pad_masks, dim=1) - 1
-                position_ids = [bagel_position_ids, position_ids]
+                position_ids = torch.cumsum(torch.cat([bagel_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
                 pad_masks = torch.cat([bagel_pad_masks, suffix_pad_masks], dim=1)
                 att_masks = torch.cat([bagel_att_masks, suffix_att_masks], dim=1)
         else: 
@@ -1097,25 +1091,29 @@ class PI0FlowMatching(nn.Module):
                 loss_dict["ce"] = ce.detach()
                 loss = loss + ce * self.bagel_model.config.ce_weight
             else:
-                loss_dict["ce"] = torch.tensor(0).cuda()
-                total_ce_tokens = torch.tensor(0).cuda()
+                loss_dict["ce"] = torch.tensor(0).cuda().float()
+                total_ce_tokens = torch.tensor(0).cuda().float()
 
             if self.bagel_model.config.visual_gen:
                 total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
+                mse = ret['mse'].clone()
                 mse = mse.mean(dim=-1).sum() / total_mse_tokens
                 loss_dict["mse"] = mse.detach()
                 loss = loss + mse * self.bagel_model.config.mse_weight
             else:
                 loss_dict["mse"] = torch.tensor(0).cuda()
                 total_mse_tokens = torch.tensor(0).cuda()
-
-        return action_losses
+            if self.bagel_model.config.visual_gen:
+                if not visual_gen_complete:
+                    action_losses = action_losses.detach()
+            loss_dict['action_mse'] = action_losses
+        return loss_dict, loss
 
     def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, batch=None, unnormalize_outputs=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         self.dtype = self.state_proj.weight.dtype
         device = torch.cuda.current_device()
-        '''
+        # '''
         if self.merge_bagel:
             new_token_ids = self.new_token_ids
             if isinstance(new_token_ids, dict):
@@ -1130,25 +1128,24 @@ class PI0FlowMatching(nn.Module):
             newlens = [0]
             new_rope = [0]
 
-            observation_images = []
             for key in batch.keys():
                 if "images." in key and "observation" in key:
-                    observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
-            observation_image = cv2.hconcat(observation_images)
-            # add images
-            image = Image.fromarray(observation_image)
-            generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
-                curr_kvlens=newlens,
-                curr_rope=new_rope, 
-                images=[image], 
-                transforms=self.dataset.dataset.vit_transform,
-                new_token_ids=new_token_ids,
-            )
-            for k, v in generation_input.items():
-                if torch.is_tensor(v):
-                    generation_input[k] = v.to(device)
-            generation_input = autocast(generation_input, torch.float32, self.dtype)
-            past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+                    image = Image.fromarray((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+                
+                    # add images
+                    generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
+                        curr_kvlens=newlens,
+                        curr_rope=new_rope,
+                        images=[image],
+                        transforms=self.dataset.dataset.vit_transform,
+                        new_token_ids=new_token_ids,
+                    )
+
+                    for k, v in generation_input.items():
+                        if torch.is_tensor(v):
+                            generation_input[k] = v.to(device)
+                    generation_input = autocast(generation_input, torch.float32, self.dtype)
+                    past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
 
             # add text
             prompt = "Instruction:" + batch['task'][0] + "."
@@ -1239,12 +1236,13 @@ class PI0FlowMatching(nn.Module):
             bagel_kv_cache = None
             bagel_sample_lens = None
             predict_images = None
-        '''
+        # '''
 
         #################
+        # '''
         if self.merge_bagel:
             self.bagel_model.train()
-            data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(                                                                                                                                                                                                                                                                              images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
+            data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(                                                                                                                                                                                images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
             )
             past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
             ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
@@ -1260,12 +1258,14 @@ class PI0FlowMatching(nn.Module):
                 bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
             bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+            import ipdb;ipdb.set_trace()
             bagel_kv_cache = ret['past_key_values']
             bagel_sample_lens = data_batch['sample_lens']
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
             predict_images = None 
+        # '''
         ################
 
 
@@ -1280,7 +1280,7 @@ class PI0FlowMatching(nn.Module):
         )
 
         if self.merge_bagel:
-            '''
+            # '''
             bagel_pad_masks = []
             bagel_att_masks = []
             batch_id = 0
@@ -1291,24 +1291,20 @@ class PI0FlowMatching(nn.Module):
             bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
             bagel_att_masks = bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            '''
+            # '''
             if not self.remove_pi0:
                #  bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks) ##TODO:
                 prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks) 
 
-                prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-                bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-                prefix_position_ids = [bagel_position_ids, prefix_position_ids]
-                
+                prefix_position_ids = torch.cumsum(torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1), dim=1) - 1
                 prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
                 prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
                 prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
             else:
-                bagel_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-                prefix_position_ids = [bagel_position_ids, None]
+                prefix_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
                 prefix_pad_masks = bagel_pad_masks
                 prefix_att_masks = bagel_att_masks
-                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None] * 0
+                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         else:
             prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
             prefix_offsets = None
@@ -1376,7 +1372,6 @@ class PI0FlowMatching(nn.Module):
             prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
 
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks.bool(),
             position_ids=position_ids,

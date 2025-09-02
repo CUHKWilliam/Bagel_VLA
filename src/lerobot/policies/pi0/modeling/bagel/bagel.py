@@ -245,6 +245,7 @@ class Bagel(PreTrainedModel):
         packed_action_token_indexes: Optional[torch.LongTensor] = None,
         action_loss_indexes: Optional[torch.BoolTensor] = None,
         past_key_values = None,
+        visual_complete_gen = False,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -318,6 +319,8 @@ class Bagel(PreTrainedModel):
             noise = torch.randn_like(packed_latent_clean)
             packed_timesteps = torch.sigmoid(packed_timesteps)
             packed_timesteps = self.timestep_shift * packed_timesteps / (1 + (self.timestep_shift - 1) * packed_timesteps)
+            if visual_complete_gen:
+                packed_timesteps *= 0
             packed_latent = (1 - packed_timesteps[:, None]) * packed_latent_clean + packed_timesteps[:, None] * noise
             packed_timestep_embeds = self.time_embedder(packed_timesteps)
             latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)

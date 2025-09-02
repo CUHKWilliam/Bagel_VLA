@@ -66,9 +66,13 @@ def update_policy(
     policy: PreTrainedPolicy,
     batch: Any,
     accelerator: Accelerator,
+    step: int = 0,
 ) -> tuple[MetricsTracker, dict]:
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
+    pi0_keep_ratio = max(1 - float(step) / 20000., 0)
+    policy.module.model.pi0_keep_ratio = pi0_keep_ratio
+
     policy.train()
     loss, output_dict = policy.forward(batch)
     # policy.select_action(batch)
@@ -77,12 +81,23 @@ def update_policy(
     
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
+    mse = output_dict['mse']
+    action_mse = output_dict['action_mse']
+    ce = output_dict['ce']
+    mse_loss_value = accelerator.gather(mse.detach()).mean().item()
+    action_mse_loss_value = accelerator.gather(action_mse.detach()).mean().item()
+    ce_loss_value = accelerator.gather(ce.detach()).mean().item()
+
     # grad_norm_value = accelerator.gather(grad_norm).mean().item()
 
     train_metrics.loss = loss.item()
+    train_metrics.ce = ce.item()
+    train_metrics.mse = mse.item()
+    train_metrics.action_mse = action_mse.item()
     # train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = policy.get_lr()[0]
     train_metrics.update_s = time.perf_counter() - start_time
+    train_metrics.pi0_keep_ratio = pi0_keep_ratio
     return train_metrics, output_dict
 
 
@@ -264,10 +279,14 @@ def train(cfg: TrainPipelineConfig):
    
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
+        "ce": AverageMeter("ce", ":.3f"),
+        "mse": AverageMeter("mse", ":.3f"),
+        "action_mse": AverageMeter("action_mse", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
         "lr": AverageMeter("lr", ":0.1e"),
         "update_s": AverageMeter("updt_s", ":.3f"),
         "dataloading_s": AverageMeter("data_s", ":.3f"),
+        "pi0_keep_ratio": AverageMeter("pi0_keep_ratio", ":.3f")
     }
 
     train_tracker = MetricsTracker(
@@ -293,6 +312,7 @@ def train(cfg: TrainPipelineConfig):
                 policy,
                 batch,
                 accelerator,
+                step,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we

@@ -716,9 +716,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
+            video_keys = self.meta.video_keys
+            for k in video_keys:
+                query_indices[k] = query_indices['action']
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
+            current_video_frames = {}
+            next_video_frames = {}
+            for k in video_frames.keys():
+                next_video_frames[f"next.{k.replace('observation.', '')}"] = video_frames[k]
+                next_video_frames[f"next.{k.replace('observation.', '')}"] = next_video_frames[f"next.{k.replace('observation.', '')}"][-1]
+                current_video_frames[k] = video_frames[k]
+                current_video_frames[k] = current_video_frames[k][0]
+            item = {**current_video_frames, **item, **next_video_frames}
 
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys

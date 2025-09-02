@@ -331,27 +331,35 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         batch_size = len(sample['task'])
         datas = []
         for batch_idx in range(batch_size):
-            observation_images = []
+            # observation_images = []
+            data = self._init_data()
             for key in sample.keys():
                 if "images." in key and "observation" in key:
-                    observation_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
-            observation_image = cv2.hconcat(observation_images)
-            data = self._init_data()
+                    # observation_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+                     data = self._add_image(
+                        data,
+                        pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                        need_loss=False,
+                        need_vae=False,
+                        need_vit=True,
+                    )
+            # observation_image = cv2.hconcat(observation_images)
+            # data = self._init_data()
             instruction = "Instruction:" + sample['task'][batch_idx] + "."
-            data = self._add_image(
-                data, 
-                pil_img2rgb(Image.fromarray(observation_image)),
-                need_loss=False, 
-                need_vae=False, 
-                need_vit=True, 
-            )
+            # data = self._add_image(
+            #     data, 
+            #     pil_img2rgb(Image.fromarray(observation_image)),
+            #     need_loss=False, 
+            #     need_vae=False, 
+            #     need_vit=True, 
+            # )
             data = self._add_text(data, instruction, need_loss=False)
             next_images = []
             for key in sample.keys():
                 if "images." in key and "next" in key:
                     next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
             if len(next_images) == 0:
-                for i in range(len(observation_images)):
+                for i in range(len(next_images)):
                     next_images.append(np.zeros_like(observation_images[i]).astype(np.uint8))
             next_img_num = len(next_images)
             next_images = cv2.hconcat(next_images)
