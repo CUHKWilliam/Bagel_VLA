@@ -202,7 +202,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     # Query model to get action
                     ts = time.time()
                     with torch.inference_mode():
-                        action_tensor = policy.select_action(observation)
+                        action_tensor, predict_image = policy.select_action(observation)
                     action = action_tensor.cpu().numpy()[0]
                     # action[-1] = 1 - action[-1]
                     action = normalize_gripper_action(action, binarize=False)

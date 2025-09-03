@@ -217,7 +217,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -539,7 +539,7 @@ class PI0Policy(PreTrainedPolicy):
                 images, img_masks, lang_tokens, lang_masks = None, None, None, None
             state = self.prepare_state(batch)
 
-            actions = self.model.sample_actions(
+            actions, predict_image = self.model.sample_actions(
                 images, img_masks, lang_tokens, lang_masks, state, noise=noise, batch=batch, unnormalize_outputs=self.unnormalize_outputs
             )
 
@@ -556,7 +556,7 @@ class PI0Policy(PreTrainedPolicy):
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             ## TODO:
             self._action_queue.extend(actions.transpose(0, 1))# [:10])
-        return self._action_queue.popleft()
+        return self._action_queue.popleft(), predict_image
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
@@ -581,7 +581,7 @@ class PI0Policy(PreTrainedPolicy):
         loss_dict, losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time, unnormalize_outputs=self.unnormalize_outputs, batch=batch)
         
         action_mse = loss_dict['action_mse'].clone()
-
+        
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
             action_mse = action_mse * in_episode_bound.unsqueeze(-1)
@@ -1127,11 +1127,12 @@ class PI0FlowMatching(nn.Module):
             past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
             newlens = [0]
             new_rope = [0]
-
+            observation_images = []
             for key in batch.keys():
                 if "images." in key and "observation" in key:
-                    image = Image.fromarray((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
-                
+                    image_np = (batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
+                    observation_images.append(image_np)
+                    image = Image.fromarray(image_np)
                     # add images
                     generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
                         curr_kvlens=newlens,
@@ -1146,7 +1147,29 @@ class PI0FlowMatching(nn.Module):
                             generation_input[k] = v.to(device)
                     generation_input = autocast(generation_input, torch.float32, self.dtype)
                     past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+            observation_image = cv2.hconcat(observation_images)
+            '''
+            observation_images = []
+            for key in batch.keys():
+                if "images." in key and "observation" in key:
+                    observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+            observation_image = cv2.hconcat(observation_images)
+            image = Image.fromarray(observation_image)
+            generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
+                curr_kvlens=newlens,
+                curr_rope=new_rope,
+                images=[image],
+                transforms=self.dataset.dataset.vit_transform,
+                new_token_ids=new_token_ids,
+            )
 
+            for k, v in generation_input.items():
+                if torch.is_tensor(v):
+                    generation_input[k] = v.to(device)
+            generation_input = autocast(generation_input, torch.float32, self.dtype)
+            past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+            '''
+            
             # add text
             prompt = "Instruction:" + batch['task'][0] + "."
             generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
@@ -1177,6 +1200,7 @@ class PI0FlowMatching(nn.Module):
             # output = tokenizer.decode(unpacked_latent[:,0])
             # output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
             
+            import ipdb;ipdb.set_trace()
             if training_args.visual_gen:
                 resolution = tuple(observation_image.shape[:2])
                 generation_input, newlens, new_rope = self.bagel_model.prepare_vae_latent(
@@ -1199,10 +1223,10 @@ class PI0FlowMatching(nn.Module):
                 for k, v in generation_input_cfg.items():
                     if torch.is_tensor(v):
                         generation_input_cfg[k] = v.to(device)
-                num_timesteps = 5 ## TODO: set timesteps here
-                cfg_scale = 4
+                num_timesteps = 24 ## TODO: set timesteps here
+                cfg_scale = 1
                 cfg_interval = [0., 1.]
-                timestep_shift = 3.0
+                timestep_shift = 1.0
                 cfg_renorm_min = 0.0
                 unpacked_latent, past_key_values = self.bagel_model.generate_image(
                     past_key_values=past_key_values,
@@ -1228,8 +1252,10 @@ class PI0FlowMatching(nn.Module):
                     tmpimage = Image.fromarray(tmpimage)
                     image_list.append(tmpimage)
                 predict_images = image_list
+                import ipdb;ipdb.set_trace()
             else:
                 predict_images = None
+            past_key_values.key_cache = past_key_values.key_unnorm_cache
             bagel_kv_cache = past_key_values
             bagel_sample_lens = [newlens[-1], -1]
         else:
@@ -1239,11 +1265,10 @@ class PI0FlowMatching(nn.Module):
         # '''
 
         #################
-        # '''
+        '''
         if self.merge_bagel:
             self.bagel_model.train()
-            data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(                                                                                                                                                                                images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
-            )
+            data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs )
             past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
             ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
             sample_lens = data_batch['sample_lens'][:-1]
@@ -1258,14 +1283,13 @@ class PI0FlowMatching(nn.Module):
                 bagel_att_masks.append(bagel_att_mask)
             bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
             bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            import ipdb;ipdb.set_trace()
             bagel_kv_cache = ret['past_key_values']
             bagel_sample_lens = data_batch['sample_lens']
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
             predict_images = None 
-        # '''
+        '''
         ################
 
 
@@ -1343,7 +1367,7 @@ class PI0FlowMatching(nn.Module):
             # Euler step
             x_t += dt * v_t
             time += dt
-        return x_t
+        return x_t, predict_image
 
     def denoise_step(
         self,

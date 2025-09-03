@@ -207,7 +207,7 @@ class NaiveCache:
     def __init__(self, num_layers):
         self.key_cache = {k: None for k in range(num_layers)}
         self.value_cache = {k: None for k in range(num_layers)}
-        self.key_unnorm_caceh = {k: None for k in range(num_layers)}
+        self.key_unnorm_cache = {k: None for k in range(num_layers)}
 
     @property
     def num_layers(self):
@@ -531,7 +531,7 @@ class PackedAttentionMoT(Qwen2Attention):
             packed_query_states = self.q_proj(packed_query_sequence).view(-1, self.num_heads, self.head_dim)
             packed_key_states = self.k_proj(packed_query_sequence).view(-1, self.num_key_value_heads, self.head_dim)
             packed_value_states = self.v_proj(packed_query_sequence).view(-1, self.num_key_value_heads, self.head_dim)
-            packed_key_unnorm_states = packed_value_states.clone()
+            packed_key_unnorm_states = packed_key_states.clone()
             packed_query_states = self.q_norm(packed_query_states)
             packed_key_states = self.k_norm(packed_key_states)
         elif mode == 'gen':
@@ -638,7 +638,6 @@ class PackedAttentionMoT(Qwen2Attention):
             past_key_values.key_cache[self.layer_idx] = merged_key_states
             past_key_values.value_cache[self.layer_idx] = merged_value_states
             past_key_values.key_unnorm_cache[self.layer_idx] = merged_key_unnorm_states
-
         return packed_attn_output, past_key_values
 
 class Qwen2DecoderLayer(nn.Module):
