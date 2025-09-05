@@ -1148,16 +1148,18 @@ class PI0FlowMatching(nn.Module):
                     generation_input = autocast(generation_input, torch.float32, self.dtype)
                     past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
                     if training_args.visual_gen:
-                        generation_input, newlens, new_rope = self.bagel_model.prepare_vae_latent(
+                        resolution = image.size
+                        generation_input, newlens, new_rope = self.bagel_model.prepare_vae_images(
                             curr_kvlens=newlens,
                             curr_rope=new_rope,
-                            image_sizes=[resolution],
+                            images=[image],
+                            transforms = self.dataset.dataset.transform,
                             new_token_ids=new_token_ids,
                         )
                         for k, v in generation_input.items():
                             if torch.is_tensor(v):
                                 generation_input[k] = v.to(device)
-                        past_key_values = self.bagel_model.forward_cache_update_vae(self.bagel_model.vae_moadel, past_key_values, **generation_input)
+                        past_key_values = self.bagel_model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
             observation_image = cv2.hconcat(observation_images)
 
            
