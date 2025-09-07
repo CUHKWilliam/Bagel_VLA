@@ -244,7 +244,6 @@ class InterleavedBaseIterableDataset:
         assert need_loss or need_vae or need_vit
 
         if need_loss:
-            assert need_vae
             data['sequence_plan'].append(
                 {
                     'type': 'vae_image', 
@@ -260,12 +259,18 @@ class InterleavedBaseIterableDataset:
             data['image_tensor_list'].append(image_tensor)
         if need_vae:
             data['sequence_plan'].append(
-                "type": "vae_image",
-                'enable_cfg': int(enable_cfg),
-                'loss': 0,
-                'special_token_loss': 0,
-                'special_token_label': None,
+                    {
+                    'type':'vae_image',
+                    'enable_cfg':int(enable_cfg),
+                    'loss':0,
+                    'special_token_loss':0,
+                    'special_token_label':None,
+                    }
             )
+            image_tensor = self.transform(image)
+            height, width = image_tensor.shape[1:]
+            data['num_tokens'] += width * height // self.transform.stride ** 2
+            data['image_tensor_list'].append(image_tensor.clone())
 
         if need_vit:
             data['sequence_plan'].append(
