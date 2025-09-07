@@ -790,10 +790,12 @@ class PI0FlowMatching(nn.Module):
                 bagel_model.language_model.config.vocab_size = len(tokenizer)
         
             # TODO: fix bagel
-            if training_args.action_gen:
-                for name, param in bagel_model.named_parameters():
-                    param.requires_grad = True
-
+            for name, param in bagel_model.named_parameters():
+                param.requires_grad = True
+            for layer_idx in range(20):
+                for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
+                    p.requires_grad = False
+            
             if training_args.freeze_vae and training_args.visual_gen:
                 for param in vae_model.parameters():
                     param.requires_grad = False
