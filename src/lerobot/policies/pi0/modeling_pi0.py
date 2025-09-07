@@ -1133,20 +1133,6 @@ class PI0FlowMatching(nn.Module):
                     image_np = (batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
                     observation_images.append(image_np)
                     image = Image.fromarray(image_np)
-                    # add images
-                    generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
-                        curr_kvlens=newlens,
-                        curr_rope=new_rope,
-                        images=[image],
-                        transforms=self.dataset.dataset.vit_transform,
-                        new_token_ids=new_token_ids,
-                    )
-
-                    for k, v in generation_input.items():
-                        if torch.is_tensor(v):
-                            generation_input[k] = v.to(device)
-                    generation_input = autocast(generation_input, torch.float32, self.dtype)
-                    past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
                     if training_args.visual_gen:
                         resolution = image.size
                         generation_input, newlens, new_rope = self.bagel_model.prepare_vae_images(
@@ -1160,11 +1146,23 @@ class PI0FlowMatching(nn.Module):
                             if torch.is_tensor(v):
                                 generation_input[k] = v.to(device)
                         past_key_values = self.bagel_model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
-            observation_image = cv2.hconcat(observation_images)
 
-           
+                    generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
+                        curr_kvlens=newlens,
+                        curr_rope=new_rope,
+                        images=[image],
+                        transforms=self.dataset.dataset.vit_transform,
+                        new_token_ids=new_token_ids,
+                    )
+
+                    for k, v in generation_input.items():
+                        if torch.is_tensor(v):
+                            generation_input[k] = v.to(device)
+                    generation_input = autocast(generation_input, torch.float32, self.dtype)
+                    past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+            observation_image = cv2.hconcat(observation_images)
             # add text
-            prompt = "Instruction:" + batch['task'][0] + "."
+            prompt = "Instruction:" + batch['task'][0] + ". Please predict the next concatenated observation and the action."
             generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
                 curr_kvlens=newlens,
                 curr_rope=new_rope, 
@@ -1215,10 +1213,10 @@ class PI0FlowMatching(nn.Module):
                 for k, v in generation_input_cfg.items():
                     if torch.is_tensor(v):
                         generation_input_cfg[k] = v.to(device)
-                num_timesteps = 24 ## TODO: set timesteps here
-                cfg_scale = 1
+                num_timesteps = 50 ## TODO: set timesteps here
+                cfg_scale = 4
                 cfg_interval = [0., 1.]
-                timestep_shift = 1.0
+                timestep_shift = 3.0
                 cfg_renorm_min = 0.0
                 unpacked_latent, past_key_values = self.bagel_model.generate_image(
                     past_key_values=past_key_values,

@@ -258,6 +258,14 @@ class InterleavedBaseIterableDataset:
             height, width = image_tensor.shape[1:]
             data['num_tokens'] += width * height // self.transform.stride ** 2
             data['image_tensor_list'].append(image_tensor)
+        if need_vae:
+            data['sequence_plan'].append(
+                "type": "vae_image",
+                'enable_cfg': int(enable_cfg),
+                'loss': 0,
+                'special_token_loss': 0,
+                'special_token_label': None,
+            )
 
         if need_vit:
             data['sequence_plan'].append(
@@ -340,12 +348,12 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                         data,
                         pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
                         need_loss=False,
-                        need_vae=False,
+                        need_vae=True,
                         need_vit=True,
                     )
             # observation_image = cv2.hconcat(observation_images)
             # data = self._init_data()
-            instruction = "Instruction:" + sample['task'][batch_idx] + "."
+            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next concatenated observation and the action."
             # data = self._add_image(
             #     data, 
             #     pil_img2rgb(Image.fromarray(observation_image)),
@@ -368,7 +376,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     data, 
                     pil_img2rgb(Image.fromarray(next_images)),
                     need_loss=True, 
-                    need_vae=True, 
+                    need_vae=False, 
                     need_vit=False, 
                 )
             datas.append(data)
