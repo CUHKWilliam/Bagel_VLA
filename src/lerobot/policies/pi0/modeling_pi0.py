@@ -556,7 +556,7 @@ class PI0Policy(PreTrainedPolicy):
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             ## TODO:
             self._action_queue.extend(actions.transpose(0, 1))# [:10])
-        return self._action_queue.popleft(), predict_image
+        return self._action_queue.popleft(), predict_images[0]
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
@@ -792,7 +792,7 @@ class PI0FlowMatching(nn.Module):
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
                 param.requires_grad = True
-            for layer_idx in range(20):
+            for layer_idx in range(21):
                 for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
                     p.requires_grad = False
             
@@ -885,7 +885,7 @@ class PI0FlowMatching(nn.Module):
         self.dtype = self.state_proj.weight.dtype
         self.paligemma_with_expert = self.paligemma_with_expert.to(self.dtype)
 
-        if self.merge_bagel:
+        if self.merge_bagel and batch is not None:
             datas = self.dataset(unnormalize_outputs(batch))
             data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
             data_batch = autocast(data_batch, torch.float32, self.dtype)
@@ -1162,9 +1162,10 @@ class PI0FlowMatching(nn.Module):
                             generation_input[k] = v.to(device)
                     generation_input = autocast(generation_input, torch.float32, self.dtype)
                     past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
-            observation_image = cv2.hconcat(observation_images)
+            # observation_image = cv2.hconcat(observation_images)
+            observation_image = image_np
             # add text
-            prompt = "Instruction:" + batch['task'][0] + ". Please predict the next concatenated observation and the action."
+            prompt = "Instruction:" + batch['task'][0] + ". Please predict the next wrist observation and the action."
             generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
                 curr_kvlens=newlens,
                 curr_rope=new_rope, 
@@ -1292,7 +1293,7 @@ class PI0FlowMatching(nn.Module):
             actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
         data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
+            images, img_masks, lang_tokens, lang_masks,
         )
 
         if self.merge_bagel:
@@ -1359,7 +1360,7 @@ class PI0FlowMatching(nn.Module):
             # Euler step
             x_t += dt * v_t
             time += dt
-        return x_t, predict_image
+        return x_t, predict_images
 
     def denoise_step(
         self,

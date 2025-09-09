@@ -358,7 +358,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     )
             # observation_image = cv2.hconcat(observation_images)
             # data = self._init_data()
-            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next concatenated observation and the action."
+            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next wrist observation and the action."
             # data = self._add_image(
             #     data, 
             #     pil_img2rgb(Image.fromarray(observation_image)),
@@ -369,13 +369,11 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             data = self._add_text(data, instruction, need_loss=False)
             next_images = []
             for key in sample.keys():
-                if "images." in key and "next" in key:
+                if "images." in key and "next" in key and "wrist" in key:
                     next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
-            if len(next_images) == 0:
-                for i in range(len(next_images)):
-                    next_images.append(np.zeros_like(observation_images[i]).astype(np.uint8))
             next_img_num = len(next_images)
-            next_images = cv2.hconcat(next_images)
+            # next_images = cv2.hconcat(next_images)
+            next_images = next_images[-1]
             if self.visual_gen:
                 data = self._add_image(
                     data, 
