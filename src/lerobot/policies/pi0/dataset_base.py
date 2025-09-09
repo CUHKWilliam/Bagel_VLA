@@ -346,7 +346,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         for batch_idx in range(batch_size):
             # observation_images = []
             data = self._init_data()
-            for key in sample.keys():
+            for key in sorted(sample.keys(), reverse=True):
                 if "images." in key and "observation" in key:
                     # observation_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
                      data = self._add_image(
@@ -358,22 +358,26 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     )
             # observation_image = cv2.hconcat(observation_images)
             # data = self._init_data()
-            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next wrist observation and the action."
+            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next concatenated observation and the action."
             # data = self._add_image(
             #     data, 
             #     pil_img2rgb(Image.fromarray(observation_image)),
             #     need_loss=False, 
-            #     need_vae=False, 
+            #     need_vae=True, 
             #     need_vit=True, 
             # )
             data = self._add_text(data, instruction, need_loss=False)
             next_images = []
-            for key in sample.keys():
-                if "images." in key and "next" in key and "wrist" in key:
+            for key in sorted(sample.keys(), reverse=True):
+                if "images." in key and "next" in key:
                     next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
             next_img_num = len(next_images)
             # next_images = cv2.hconcat(next_images)
             next_images = next_images[-1]
+            if torch.cuda.current_device() == 0:
+                import ipdb;ipdb.set_trace()
+            else:
+                while True: pass
             if self.visual_gen:
                 data = self._add_image(
                     data, 

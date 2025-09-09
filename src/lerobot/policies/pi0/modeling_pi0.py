@@ -556,7 +556,9 @@ class PI0Policy(PreTrainedPolicy):
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             ## TODO:
             self._action_queue.extend(actions.transpose(0, 1))# [:10])
-        return self._action_queue.popleft(), predict_images[0]
+        else:
+            predict_image = [None]
+        return self._action_queue.popleft(), predict_image[0]
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
@@ -1130,10 +1132,9 @@ class PI0FlowMatching(nn.Module):
             newlens = [0]
             new_rope = [0]
             observation_images = []
-            for key in batch.keys():
+            for key in sorted(batch.keys(), reverse=True):
                 if "images." in key and "observation" in key:
                     image_np = (batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
-                    observation_images.append(image_np)
                     image = Image.fromarray(image_np)
                     if training_args.visual_gen:
                         resolution = image.size
@@ -1162,10 +1163,11 @@ class PI0FlowMatching(nn.Module):
                             generation_input[k] = v.to(device)
                     generation_input = autocast(generation_input, torch.float32, self.dtype)
                     past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+                    observation_images.append(image_np)
             # observation_image = cv2.hconcat(observation_images)
-            observation_image = image_np
+            observation_image = observation_images[-1]
             # add text
-            prompt = "Instruction:" + batch['task'][0] + ". Please predict the next wrist observation and the action."
+            prompt = "Instruction:" + batch['task'][0] + ". Please predict the next concatenated observation and the action."
             generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
                 curr_kvlens=newlens,
                 curr_rope=new_rope, 
