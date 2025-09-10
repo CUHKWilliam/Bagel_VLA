@@ -305,8 +305,6 @@ class DataConfig:
 
 
 
-
-
 def create_sinusoidal_pos_embedding(
     time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
 ) -> Tensor:
@@ -794,7 +792,7 @@ class PI0FlowMatching(nn.Module):
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
                 param.requires_grad = True
-            for layer_idx in range(21):
+            for layer_idx in range(12):
                 for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
                     p.requires_grad = False
             
@@ -1061,7 +1059,10 @@ class PI0FlowMatching(nn.Module):
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
-        
+        if torch.cuda.current_device() == 0:
+            import ipdb;ipdb.set_trace()
+        else:
+            while True: pass
 
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks.bool(),
@@ -1149,7 +1150,6 @@ class PI0FlowMatching(nn.Module):
                             if torch.is_tensor(v):
                                 generation_input[k] = v.to(device)
                         past_key_values = self.bagel_model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
-
                     generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
                         curr_kvlens=newlens,
                         curr_rope=new_rope,
@@ -1167,7 +1167,7 @@ class PI0FlowMatching(nn.Module):
             # observation_image = cv2.hconcat(observation_images)
             observation_image = observation_images[-1]
             # add text
-            prompt = "Instruction:" + batch['task'][0] + ". Please predict the next concatenated observation and the action."
+            prompt = "Instruction:" + batch['task'][0] + ". Please predict the next observation and the action."
             generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
                 curr_kvlens=newlens,
                 curr_rope=new_rope, 
@@ -1179,7 +1179,6 @@ class PI0FlowMatching(nn.Module):
                 if torch.is_tensor(v):
                     generation_input[k] = v.to(device)
             past_key_values = self.bagel_model.forward_cache_update_text(past_key_values, **generation_input)
-
             # TODO: decode for text generation
             # generation_input = self.prepare_start_tokens(newlens, new_rope, new_token_ids)
             # for k, v in generation_input.items():
@@ -1197,7 +1196,8 @@ class PI0FlowMatching(nn.Module):
             # output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
             
             if training_args.visual_gen:
-                resolution = tuple(observation_image.shape[:2])
+                image_tensor = self.dataset.dataset.transform(Image.fromarray(observation_image))
+                resolution = tuple(self.dataset.dataset.transform(Image.fromarray(observation_image)).shape)[1:]
                 generation_input, newlens, new_rope = self.bagel_model.prepare_vae_latent(
                     curr_kvlens=newlens,
                     curr_rope=new_rope, 
@@ -1247,7 +1247,8 @@ class PI0FlowMatching(nn.Module):
                     tmpimage = Image.fromarray(tmpimage)
                     image_list.append(tmpimage)
                 predict_images = image_list
-                import ipdb;ipdb.set_trace()
+                predict_images[0].save('./debug4.png')
+                # import ipdb;ipdb.set_trace()
             else:
                 predict_images = None
             past_key_values.key_cache = past_key_values.key_unnorm_cache
@@ -1327,9 +1328,8 @@ class PI0FlowMatching(nn.Module):
         else:
             prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
             prefix_offsets = None
-
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        
+         
         # Compute image and language key value cache
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks.bool(),

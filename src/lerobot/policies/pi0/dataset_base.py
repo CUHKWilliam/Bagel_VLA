@@ -286,7 +286,7 @@ class InterleavedBaseIterableDataset:
             height, width = vit_image_tensor.shape[1:]
             data['num_tokens'] += width * height // self.vit_transform.stride ** 2
             data['image_tensor_list'].append(vit_image_tensor)
-
+        
         return data
 
     def _add_video(self, data, frames, frame_indexes, need_loss, need_vae, enable_cfg=True):
@@ -358,7 +358,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     )
             # observation_image = cv2.hconcat(observation_images)
             # data = self._init_data()
-            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next concatenated observation and the action."
+            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
             # data = self._add_image(
             #     data, 
             #     pil_img2rgb(Image.fromarray(observation_image)),
@@ -374,10 +374,6 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             next_img_num = len(next_images)
             # next_images = cv2.hconcat(next_images)
             next_images = next_images[-1]
-            if torch.cuda.current_device() == 0:
-                import ipdb;ipdb.set_trace()
-            else:
-                while True: pass
             if self.visual_gen:
                 data = self._add_image(
                     data, 
