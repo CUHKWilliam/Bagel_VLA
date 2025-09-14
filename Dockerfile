@@ -1,19 +1,18 @@
-FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
+# Use the CUDA 12.6 base image
+FROM 528762/vla-env:latest
 
-# Set environment variables to avoid interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
+# Set working directory to /root
+WORKDIR /root
 
-# Install basic utilities
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    wget \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# Install git (if not already installed)
+RUN apt-get update && apt-get install -y git
 
-# Set environment variables for CUDA
-ENV PATH=/usr/local/cuda/bin${PATH:+:${PATH}}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+# Clone Bagel_VLA (server branch)
+RUN git clone https://github.com/CUHKWilliam/Bagel_VLA.git -b server
 
-WORKDIR /workspace
-CMD ["bash"]
+# Set the working directory to Bagel_VLA on startup
+WORKDIR /root/Bagel_VLA
+
+# Default command (bash shell)
+CMD ["/bin/bash"]
+
