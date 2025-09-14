@@ -353,7 +353,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                         data,
                         pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
                         need_loss=False,
-                        need_vae=True,
+                        need_vae=self.visual_gen,
                         need_vit=True,
                     )
             # observation_image = cv2.hconcat(observation_images)
@@ -380,7 +380,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     pil_img2rgb(Image.fromarray(next_images)),
                     need_loss=True, 
                     need_vae=False, 
-                    need_vit=False, 
+                    need_vit=True, 
                 )
             datas.append(data)
         return datas
@@ -449,15 +449,15 @@ class PackedDataset:
         dataset_args = {
             "image_transform_args": {
                 "image_stride": 16,
-                "max_image_size": 1024,
-                "min_image_size": 512
-                # "max_image_size": 128,
-                # "min_image_size": 64
+                # "max_image_size": 1024,
+                # "min_image_size": 512
+                "max_image_size": 256,
+                "min_image_size": 256
             },
             "vit_image_transform_args":{
                 "image_stride": 14,
-                "max_image_size": 518,
-                "min_image_size": 224
+                "max_image_size": 256,
+                "min_image_size": 256
                 # "max_image_size": 128,
                 # "min_image_size": 64
             },

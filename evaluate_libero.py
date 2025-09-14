@@ -29,7 +29,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256  # resolution used to render training data
 
-
+SHOW_PREDICT_IMAGE = True ## TODO:
 
 def normalize_gripper_action(action, binarize=True):
     """
@@ -167,6 +167,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
 
             # Add initial frame
             agentview_image = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
+            last_predict_image = np.zeros_like(agentview_image).astype(np.uint8)
             # frames.append(agentview_image)
             # import ipdb; ipdb.set_trace()
             logging.info(f"Starting episode {task_episodes+1}...")
@@ -207,7 +208,11 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     # action[-1] = 1 - action[-1]
                     action = normalize_gripper_action(action, binarize=False)
                     action = invert_gripper_action(action)
-                    
+                    if SHOW_PREDICT_IMAGE:
+                        if predict_image is not None:
+                            if predict_image is not None:
+                                last_predict_image = np.asarray(predict_image)
+                            frames[-1] = cv2.hconcat([frames[-1], last_predict_image])
                     # Execute action in environment
                     obs, _, done, _ = env.step(action)
                     if done:
@@ -226,12 +231,12 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
             suffix = "success" if done else "failure"
             task_segment = task_description.replace(" ", "_").replace("/", "_")
             video_path = (
-                pathlib.Path(args.video_out_path) / f"rollout_task_{task_id}_episode_{episode_idx}_{task_segment}_{suffix}.mp4"
+                pathlib.Path(args.video_out_path) / f"rollout_task_{task_id}_episode_{episode_idx}_{task_segment}_{suffix}_10-step.mp4"
             )
             fps = 30
             width, height, _ = frames[0].shape
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer =  cv2.VideoWriter(video_path, fourcc, fps, (width,height)) 
+            writer =  cv2.VideoWriter(video_path, fourcc, fps, (height, width)) 
             for image in frames:
                 writer.write(image)
             writer.release()

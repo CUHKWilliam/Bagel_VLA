@@ -217,7 +217,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -792,9 +792,9 @@ class PI0FlowMatching(nn.Module):
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
                 param.requires_grad = True
-            for layer_idx in range(12):
-                for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
-                    p.requires_grad = False
+            # for layer_idx in range(12):
+            #     for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
+            #         p.requires_grad = False
             
             if training_args.freeze_vae and training_args.visual_gen:
                 for param in vae_model.parameters():
@@ -1022,6 +1022,8 @@ class PI0FlowMatching(nn.Module):
             past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
             if self.bagel_model.config.visual_gen:
                 visual_gen_complete = np.random.rand() < 0.5
+            else:
+                visual_gen_complete = 1
             ret = self.bagel_model(**data_batch, past_key_values=past_key_values, visual_gen_complete=visual_gen_complete)
             sample_lens = data_batch['sample_lens'][:-1]
             max_sample_lens = max(sample_lens)
@@ -1059,11 +1061,6 @@ class PI0FlowMatching(nn.Module):
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
-        if torch.cuda.current_device() == 0:
-            import ipdb;ipdb.set_trace()
-        else:
-            while True: pass
-
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks.bool(),
             position_ids=position_ids,
@@ -1106,7 +1103,7 @@ class PI0FlowMatching(nn.Module):
                 loss_dict["mse"] = mse.detach()
                 loss = loss + mse * self.bagel_model.config.mse_weight
             else:
-                loss_dict["mse"] = torch.tensor(0).cuda()
+                loss_dict["mse"] = torch.tensor(0).cuda().float()
                 total_mse_tokens = torch.tensor(0).cuda()
             if self.bagel_model.config.visual_gen:
                 if not visual_gen_complete:
@@ -1218,7 +1215,7 @@ class PI0FlowMatching(nn.Module):
                 for k, v in generation_input_cfg.items():
                     if torch.is_tensor(v):
                         generation_input_cfg[k] = v.to(device)
-                num_timesteps = 50 ## TODO: set timesteps here
+                num_timesteps = 10 ## TODO: set timesteps here
                 cfg_scale = 4
                 cfg_interval = [0., 1.]
                 timestep_shift = 3.0
@@ -1249,8 +1246,20 @@ class PI0FlowMatching(nn.Module):
                 predict_images = image_list
                 predict_images[0].save('./debug4.png')
                 # import ipdb;ipdb.set_trace()
+                generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
+                    curr_kvlens=newlens,
+                    curr_rope=new_rope,
+                    images=[predict_images[0]],
+                    transforms=self.dataset.dataset.vit_transform,
+                    new_token_ids=new_token_ids,
+                )
+                for k, v in generation_input.items():
+                    if torch.is_tensor(v):
+                        generation_input[k] = v.to(device)
+                generation_input = autocast(generation_input, torch.float32, self.dtype)
+                past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
             else:
-                predict_images = None
+                predict_images = [None]
             past_key_values.key_cache = past_key_values.key_unnorm_cache
             bagel_kv_cache = past_key_values
             bagel_sample_lens = [newlens[-1], -1]
