@@ -182,7 +182,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         # Remove unused embed_tokens
         self.gemma_expert.model.embed_tokens = None
 
-        # self.to_bfloat16_like_physical_intelligence()
+        self.to_bfloat16_like_physical_intelligence()
         self.set_requires_grad()
 
     def set_requires_grad(self):
@@ -208,7 +208,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             self.paligemma.eval()
 
     def to_bfloat16_like_physical_intelligence(self):
-        self.paligemma = self.paligemma.to(dtype=torch.bfloat16)
+        if self.paligemma is not None:
+            self.paligemma = self.paligemma.to(dtype=torch.bfloat16)
 
         params_to_change_dtype = [
             "language_model.model.layers",
@@ -464,8 +465,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
         # Attention here is upcasted to float32 to match the original eager implementation.
 
-        query_states = query_states.to(dtype=torch.float32)
-        key_states = key_states.to(dtype=torch.float32)
+        # query_states = query_states.to(dtype=torch.float32)
+        # key_states = key_states.to(dtype=torch.float32)
 
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)

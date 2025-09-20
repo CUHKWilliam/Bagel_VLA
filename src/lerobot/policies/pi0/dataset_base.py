@@ -22,6 +22,8 @@ from torchvision.transforms import functional as F
 import torch
 from lerobot.utils.data_utils import pil_img2rgb
 import cv2
+from lerobot.constants import ACTION, OBS_STATE
+
 
 Image.MAX_IMAGE_PIXELS = 200000000
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -335,10 +337,12 @@ class InterleavedBaseIterableDataset:
 
 
 class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
-    def __init__(self, transform, vit_transform, tokenizer, action_horizon=5, action_dim=7, visual_gen=True,):
+    def __init__(self, transform, vit_transform, tokenizer, action_horizon=5, action_dim=7, visual_gen=True,action_gen=True,):
         super().__init__(transform, vit_transform, tokenizer)
         self.action_horizon, self.action_dim = action_horizon, action_dim
         self.visual_gen = visual_gen
+        self.action_gen = action_gen
+        self.action_horizon = action_horizon
 
     def __call__(self, sample):
         batch_size = len(sample['task'])
@@ -346,6 +350,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         for batch_idx in range(batch_size):
             # observation_images = []
             data = self._init_data()
+
             for key in sorted(sample.keys(), reverse=True):
                 if "images." in key and "observation" in key:
                     # observation_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
@@ -382,6 +387,13 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     need_vae=False, 
                     need_vit=True, 
                 )
+            if self.action_gen:
+                actions = sample[ACTION][0]
+                data = self._add_action(
+                    data,
+                    actions,
+                    need_loss=True,
+                )
             datas.append(data)
         return datas
     
@@ -414,9 +426,9 @@ class PackedDataset:
         data_config, 
         tokenizer, 
         special_tokens,
-        expected_num_tokens=32768, 
+        expected_num_tokens=54768, 
         max_num_tokens_per_sample=16384,
-        max_num_tokens=36864,
+        max_num_tokens=86864,
         prefer_buffer_before=16384,
         max_buffer_size=50,
         interpolate_pos=False,
@@ -499,11 +511,10 @@ class PackedDataset:
             vit_token_seqlens           = list(),
             packed_vit_position_ids     = list(),
             packed_vit_token_indexes    = list(), 
-            packed_action_token_indexes = list(),
-            packed_action_position_ids  = list(),
-            packed_action_tokens        = list(),
-            action_loss_indexes         = list(),
-            action_loss_weights         = list(),
+            packed_act_token_indexes = list(),
+            packed_act_tokens        = list(),
+            act_ce_loss_indexes         = list(),
+            act_ce_loss_weights         = list(),
         )
         return sequence_status
 
@@ -555,11 +566,11 @@ class PackedDataset:
             data['ce_loss_indexes'] = torch.tensor(sequence_status['ce_loss_indexes'])
             data['ce_loss_weights'] = torch.tensor(sequence_status['ce_loss_weights'])
 
-        if len(sequence_status['packed_action_tokens']) > 0:
-            data['packed_action_tokens'] = torch.cat(sequence_status['packed_action_tokens'], dim=0)
-            data['packed_action_position_ids'] = torch.tensor(sequence_status['packed_action_position_ids'])
-            data['packed_action_token_indexes'] = torch.tensor(sequence_status['packed_action_token_indexes'])
-            data['action_loss_indexes'] = torch.tensor(sequence_status['action_loss_indexes'])
+        if len(sequence_status['packed_act_tokens']) > 0:
+            data['packed_act_tokens'] = torch.cat(sequence_status['packed_act_tokens'], dim=0)
+            data['packed_act_token_indexes'] = torch.tensor(sequence_status['packed_act_token_indexes'])
+            data['act_ce_loss_indexes'] = torch.tensor(sequence_status['act_ce_loss_indexes'])
+            data['act_ce_loss_weights'] = torch.tensor(sequence_status['act_ce_loss_weights'])
         return data
 
     def __call__(self, sample):
@@ -657,6 +668,40 @@ class PackedDataset:
                 # update sequence status
                 attn_modes.append("full")
                 sequence_status['packed_position_ids'].extend([curr_rope_id] * curr_split_len)
+                curr_rope_id += 1
+
+            elif item['type'] == 'action':
+                action_tokens = sample['action'].pop(0)
+                # add a <|startofaction|> token
+                sequence_status['packed_text_ids'].append(self.boa_token_id)
+                sequence_status['packed_text_indexes'].append(curr)
+                curr += 1
+                curr_split_len += 1
+
+                # preprocess image
+                num_act_tokens = action_tokens.shape[0]
+                sequence_status['packed_act_token_indexes'].extend(range(curr, curr + num_act_tokens))
+                sequence_status['packed_act_tokens'].append(action_tokens)
+                sequence_status['act_ce_loss_indexes'].extend(range(curr, curr + num_act_tokens))
+                sequence_status['act_ce_loss_weights'].extend(
+                    [len2weight(num_act_tokens)] * num_act_tokens
+                )
+                curr += num_act_tokens
+                curr_split_len += num_act_tokens
+
+                # add a <|endofaction|> token
+                sequence_status['packed_text_ids'].append(self.eoa_token_id)
+                sequence_status['packed_text_indexes'].append(curr)
+                if item['special_token_loss'] == 1: # <|endofactino|> may have loss
+                    sequence_status['ce_loss_indexes'].append(curr)
+                    sequence_status['ce_loss_weights'].append(1.0)
+                    sequence_status['packed_label_ids'].append(item['special_token_label'])
+                curr += 1
+                curr_split_len += 1
+
+                # update sequence status
+                attn_modes.append("causal")
+                sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
                 curr_rope_id += 1
 
             elif item['type'] == 'vae_image':
@@ -776,6 +821,12 @@ class SimpleCustomBatch:
             self.ce_loss_indexes = data["ce_loss_indexes"]
             self.ce_loss_weights = data["ce_loss_weights"]
 
+        if "packed_act_tokens" in data.keys():
+            self.packed_act_tokens = data["packed_act_tokens"]
+            self.packed_act_token_indexes = data["packed_act_token_indexes"]
+            self.act_ce_loss_indexes = data['act_ce_loss_indexes']
+            self.act_ce_loss_weights = data['act_ce_loss_weights']
+
     def pin_memory(self):
         self.packed_text_ids = self.packed_text_ids.pin_memory()
         self.packed_text_indexes = self.packed_text_indexes.pin_memory()
@@ -798,6 +849,12 @@ class SimpleCustomBatch:
             self.packed_vit_position_ids = self.packed_vit_position_ids.pin_memory()
             self.packed_vit_token_indexes = self.packed_vit_token_indexes.pin_memory()
             self.vit_token_seqlens = self.vit_token_seqlens.pin_memory()
+
+        if hasattr(self, 'packed_act_tokens'):
+            self.packed_act_tokens = self.packed_act_tokens.pin_memory()
+            self.packed_act_token_indexes = self.packed_act_token_indexes.pin_memory()
+            self.act_ce_loss_indexes = self.act_ce_loss_indexes.pin_memory()
+            self.act_ce_loss_weights = self.act_ce_loss_weights.pin_memory()
 
         if hasattr(self, 'packed_label_ids'):
             self.packed_label_ids = self.packed_label_ids.pin_memory()
@@ -828,6 +885,12 @@ class SimpleCustomBatch:
             self.packed_vit_position_ids = self.packed_vit_position_ids.to(device)
             self.packed_vit_token_indexes = self.packed_vit_token_indexes.to(device)
             self.vit_token_seqlens = self.vit_token_seqlens.to(device)
+
+        if hasattr(self, 'packed_act_token'):
+            self.packed_act_tokens = self.packed_act_tokens.to(device)
+            self.packed_act_token_indexes = self.packed_act_token_indexes.to(device)
+            self.act_ce_loss_indexes = self.act_ce_loss_indexes.to(device)
+            self.act_ce_loss_weights = self.act_ce_loss_weights.to(device)
 
         if hasattr(self, 'packed_label_ids'):
             self.packed_label_ids = self.packed_label_ids.to(device)
@@ -871,6 +934,12 @@ class SimpleCustomBatch:
             data['packed_label_ids'] = self.packed_label_ids
             data['ce_loss_indexes'] = self.ce_loss_indexes
             data['ce_loss_weights'] = self.ce_loss_weights
+
+        if hasattr(self, 'packed_act_tokens'):
+            data['packed_act_tokens'] = self.packed_act_tokens
+            data['packed_act_token_indexes'] = self.packed_act_token_indexes
+            data['act_ce_loss_indexes'] = self.act_ce_loss_indexes
+            data['act_ce_loss_weights'] = self.act_ce_loss_weights
         return data
 
 

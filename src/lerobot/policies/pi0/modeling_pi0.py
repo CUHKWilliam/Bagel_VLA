@@ -56,7 +56,7 @@ from collections import deque
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoProcessor
 
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.normalize import Normalize, Unnormalize
@@ -93,6 +93,7 @@ import torch
 import cv2
 from PIL import Image
 from safetensors.torch import load_file
+import time as Time
 
 def autocast(data_batch, dtype1, dtype2):
     for key in data_batch.keys():
@@ -123,7 +124,7 @@ class DataArguments:
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=6000,
+        default=6500,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -477,7 +478,6 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.remove_pi0 = config.remove_pi0 if config.remove_pi0 is not None else False
         self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
@@ -485,10 +485,46 @@ class PI0Policy(PreTrainedPolicy):
         self.unnormalize_outputs = Unnormalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
-        if not self.remove_pi0:
-            self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
         self.reset()
+        
+        with open(data_args.dataset_config_file, "r") as stream:
+            dataset_meta = yaml.safe_load(stream)
+        dataset_config = DataConfig(grouped_datasets=dataset_meta)
+        if training_args.visual_und:
+            dataset_config.vit_patch_size = model_args.vit_patch_size
+            dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
+        vae_config = self.model.vae_config
+        vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
+        self.fast_skip_tokens = 128 ## TODO:
+        dataset_config.vae_image_downsample = vae_image_downsample
+        dataset_config.max_latent_size = model_args.max_latent_size
+        dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
+        dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
+        dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
+        self.dataset = PackedDataset(
+            dataset_config,
+            tokenizer=self.model.tokenizer,
+            special_tokens=self.model.new_token_ids,
+            expected_num_tokens=training_args.expected_num_tokens,
+            max_num_tokens_per_sample=data_args.max_num_tokens_per_sample,
+            max_num_tokens=data_args.max_num_tokens,
+            max_buffer_size=data_args.max_buffer_size,
+            prefer_buffer_before=data_args.prefer_buffer_before,
+            interpolate_pos=model_args.interpolate_pos,
+            use_flex=training_args.use_flex,
+            data_status=None,
+            action_dim=self.model.bagel_model.config.action_dim,
+            action_horizon = self.config.chunk_size,
+            visual_gen=training_args.visual_gen,
+        )
+        fast_tokenizer_path = "physical-intelligence/fast"
+        self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
+        self.pad_token_id = (
+            self.model.tokenizer.pad_token_id
+            if hasattr(self.model.tokenizer, "pad_token_id")
+            else self.model.tokenizer.eos_token_id
+        )
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -530,15 +566,10 @@ class PI0Policy(PreTrainedPolicy):
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            if not self.remove_pi0:
-                images, img_masks = self.prepare_images(batch)
-                lang_tokens, lang_masks = self.prepare_language(batch)
-            else:
-                images, img_masks, lang_tokens, lang_masks = None, None, None, None
             state = self.prepare_state(batch)
 
             actions, predict_image = self.model.sample_actions(
-                images, img_masks, lang_tokens, lang_masks, state, noise=noise, batch=batch, unnormalize_outputs=self.unnormalize_outputs
+                state, noise=noise, batch=batch
             )
 
             # Unpad actions
@@ -557,108 +588,68 @@ class PI0Policy(PreTrainedPolicy):
         else:
             predict_image = [None]
         return self._action_queue.popleft(), predict_image[0]
+    
+    def normalize_actions(self, actions: torch.Tensor) -> torch.Tensor:
+        mins = actions.amin(dim=(1, 2), keepdim=True)  # [0]
+        maxs = actions.amax(dim=(1, 2), keepdim=True)  # [0]
+        return 2 * (actions - mins) / (maxs - mins + 1e-8) - 1
 
-    def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
-        """Do a full training forward pass to compute the loss"""
+    
+    def fast_tokenizer_wrapper(self, actions_norm):
+        """
+        A wrapper for self.fast_tokenizer that ensures batch processing,
+        conversion to PyTorch tensors, and returns a dictionary without padding.
+        """
+        batch_tokens = self.fast_tokenizer(actions_norm)
+        fast_out = self.model.tokenizer.pad({"input_ids": batch_tokens}, return_tensors="pt")
+        return fast_out
+
+    def _act_tokens_to_bagel_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
+        out = self.model.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
+        return out
+    
+    def tokenize_action(self, actions):
+        actions_norm = self.normalize_actions(actions)
+        actions_pad = F.pad(
+            actions_norm, (0, max(0, self.config.max_action_dim - actions_norm.shape[2])), value=0
+        )[:, :, : self.config.max_action_dim]
+        fast_out = self.fast_tokenizer_wrapper(
+            actions_pad.cpu(),
+        )
+        act_ids = fast_out["input_ids"]
+        act_mask = fast_out["attention_mask"].cuda()
+        act_ids2 = self._act_tokens_to_bagel_tokens(act_ids).cuda()
+        act_ids2[act_mask == 0] = self.pad_token_id
+        return act_ids2
+
+
+    def prepare_inputs(self, batch):
+        self.dtype = self.model.state_proj.weight.dtype
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
+        actions = batch[ACTION]
+        act_ids = self.tokenize_action(actions)
+        batch['action'] = act_ids
+        datas = self.dataset(batch)
+        data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        data_batch = autocast(data_batch, torch.float32, self.dtype)
+        if training_args.visual_gen:
+            with torch.no_grad():
+                data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+        if "packed_act_tokens" in data_batch.keys():
+            with torch.no_grad():
+                data_batch['packed_act_tokens'] = torch.tensor(data_batch['packed_act_tokens']).to(f"cuda:{torch.cuda.current_device()}")
 
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
-        state = self.prepare_state(batch)
+        return data_batch
 
-        if not self.remove_pi0:
-            images, img_masks = self.prepare_images(batch)
-            lang_tokens, lang_masks = self.prepare_language(batch)
-        else:
-            images, img_masks, lang_tokens, lang_masks = None, None, None, None
 
-        actions = self.prepare_action(batch)
-        actions_is_pad = batch.get("action_is_pad")
-
+    def forward(self, batch: dict[str, Tensor], noise=None, time=None, get_time=False) -> tuple[Tensor, dict[str, Tensor]]:
+        """Do a full training forward pass to compute the loss"""
+        data_batch = self.prepare_inputs(batch)
         loss_dict = {}
-        loss_dict, losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time, unnormalize_outputs=self.unnormalize_outputs, batch=batch)
-        
-        action_mse = loss_dict['action_mse'].clone()
-        
-        if actions_is_pad is not None:
-            in_episode_bound = ~actions_is_pad
-            action_mse = action_mse * in_episode_bound.unsqueeze(-1)
-
-        # Remove padding
-        action_mse = action_mse[:, :, : self.config.max_action_dim]
-
-        # For backward pass
-        action_mse = action_mse.mean()
-        loss_dict['action_mse'] = action_mse.clone().detach()
-        # For logging
-        losses += action_mse
-        
+        loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
         return losses, loss_dict
-
-    def prepare_images(self, batch):
-        """Apply Pi0 preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
-        convert pixel range from [0.0, 1.0] to [-1.0, 1.0] as requested by SigLIP.
-        """
-        images = []
-        img_masks = []
-
-        present_img_keys = [key for key in self.config.image_features if key in batch]
-        missing_img_keys = [key for key in self.config.image_features if key not in batch]
-
-        if len(present_img_keys) == 0:
-            raise ValueError(
-                f"All image features are missing from the batch. At least one expected. (batch: {batch.keys()}) (image_features:{self.config.image_features})"
-            )
-
-        # Preprocess image features present in the batch
-        for key in present_img_keys:
-            img = batch[key]
-
-            if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
-
-            # Normalize from range [0,1] to [-1,1] as expected by siglip
-            img = img * 2.0 - 1.0
-
-            bsize = img.shape[0]
-            device = img.device
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            images.append(img)
-            img_masks.append(mask)
-
-        # Create image features not present in the batch
-        # as fully 0 padded images.
-        for num_empty_cameras in range(len(missing_img_keys)):
-            if num_empty_cameras >= self.config.empty_cameras:
-                break
-            img = torch.ones_like(img) * -1
-            mask = torch.zeros_like(mask)
-            images.append(img)
-            img_masks.append(mask)
-
-        return images, img_masks
-
-    def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
-        """Tokenize the text input"""
-        device = batch[OBS_STATE].device
-        tasks = batch["task"]
-
-        # PaliGemma prompt has to end with a new line
-        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
-
-        tokenized_prompt = self.language_tokenizer.__call__(
-            tasks,
-            padding="max_length",
-            padding_side="right",
-            max_length=self.config.tokenizer_max_length,
-            return_tensors="pt",
-        )
-        lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
 
     def _pi_aloha_decode_state(self, state):
         # Flip the joints.
@@ -692,10 +683,6 @@ class PI0Policy(PreTrainedPolicy):
         state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
-    def prepare_action(self, batch):
-        """Pad action"""
-        actions = pad_vector(batch[ACTION], self.config.max_action_dim)
-        return actions
 
 
 class PI0FlowMatching(nn.Module):
@@ -729,12 +716,8 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         self.config = config
         
-        self.merge_bagel = config.merge_bagel if config.merge_bagel is not None else False
-        self.pi0_keep_ratio = config.pi0_keep_ratio if config.pi0_keep_ratio is not None else False
-        self.remove_pi0 = config.remove_pi0 if config.remove_pi0 is not None else False
 
-        if self.merge_bagel:
-            assert self.pi0_keep_ratio is not None
+        if True:
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             llm_config.layer_module = model_args.layer_module
             llm_config.qk_norm = model_args.llm_qk_norm
@@ -788,7 +771,7 @@ class PI0FlowMatching(nn.Module):
                 bagel_model.language_model.resize_token_embeddings(len(tokenizer))
                 bagel_model.config.llm_config.vocab_size = len(tokenizer)
                 bagel_model.language_model.config.vocab_size = len(tokenizer)
-        
+            self.tokenizer = tokenizer
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
                 param.requires_grad = True
@@ -810,46 +793,7 @@ class PI0FlowMatching(nn.Module):
                 for param in bagel_model.vit_model.parameters():
                     param.requires_grad = False
             
-            # Setup packed dataloader
-            with open(data_args.dataset_config_file, "r") as stream:
-                dataset_meta = yaml.safe_load(stream)
-            dataset_config = DataConfig(grouped_datasets=dataset_meta)
-            if training_args.visual_und:
-                dataset_config.vit_patch_size = model_args.vit_patch_size
-                dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
-            vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
-            dataset_config.vae_image_downsample = vae_image_downsample
-            dataset_config.max_latent_size = model_args.max_latent_size
-            dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
-            dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
-            dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
-            self.dataset = PackedDataset(
-                dataset_config,
-                tokenizer=tokenizer,
-                special_tokens=new_token_ids,
-                expected_num_tokens=training_args.expected_num_tokens,
-                max_num_tokens_per_sample=data_args.max_num_tokens_per_sample,
-                max_num_tokens=data_args.max_num_tokens,
-                max_buffer_size=data_args.max_buffer_size,
-                prefer_buffer_before=data_args.prefer_buffer_before,
-                interpolate_pos=model_args.interpolate_pos,
-                use_flex=training_args.use_flex,
-                data_status=None,
-                action_dim=self.bagel_model.config.action_dim,
-                action_horizon = self.config.chunk_size,
-                visual_gen=training_args.visual_gen,
-            )
-        
-        paligemma_with_expert_config = PaliGemmaWithExpertConfig(
-            freeze_vision_encoder = self.config.freeze_vision_encoder,
-            train_expert_only = self.config.train_expert_only,
-            attention_implementation = self.config.attention_implementation,
-            remove_pi0 = self.remove_pi0
-        )
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_expert_config, self.remove_pi0).float().cuda()
-
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
         self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
         self.set_requires_grad()
@@ -875,74 +819,6 @@ class PI0FlowMatching(nn.Module):
         time_beta = sample_beta(1.5, 1.0, bsize, device)
         time = time_beta * 0.999 + 0.001
         return time.to(dtype=torch.float32, device=device)
-
-    def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks, batch=None, unnormalize_outputs=None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer to prepare
-        for PaliGemma transformer processing.
-        """
-        self.dtype = self.state_proj.weight.dtype
-        self.paligemma_with_expert = self.paligemma_with_expert.to(self.dtype)
-
-        if self.merge_bagel and batch is not None:
-            datas = self.dataset(unnormalize_outputs(batch))
-            data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
-            data_batch = autocast(data_batch, torch.float32, self.dtype)
-            if training_args.visual_gen:
-               with torch.no_grad():
-                    data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
-            if "packed_action_tokens" in data_batch.keys():
-                with torch.no_grad():
-                    data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
-        else:
-            data_batch = None
-
-        if self.remove_pi0:
-            return data_batch, None, None, None
-        # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
-        embs = []
-        pad_masks = []
-        att_masks = []
-
-        # TODO: remove for loop
-        for (
-            img,
-            img_mask,
-        ) in zip(images, img_masks, strict=False):
-            img_emb = self.paligemma_with_expert.embed_image(img)
-            # img_emb = img_emb.to(dtype=torch.bfloat16)
-
-            # Normalize image embeddings
-            img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
-
-            bsize, num_img_embs = img_emb.shape[:2]
-            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
-
-            embs.append(img_emb)
-            pad_masks.append(img_mask)
-
-            # Create attention masks so that image tokens attend to each other
-            att_masks += [0] * num_img_embs
-
-        lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
-
-        # Normalize language embeddings
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-        
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
-
-        # full attention between image and language inputs
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-        return data_batch, embs, pad_masks, att_masks
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -998,117 +874,82 @@ class PI0FlowMatching(nn.Module):
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None, unnormalize_outputs=None, batch=None
+        self, state=None, noise=None, time=None, data_batch=None, get_time=False, actions=None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        if noise is None:
-            noise = self.sample_noise(actions.shape, actions.device)
 
-        if time is None:
-            time = self.sample_time(actions.shape[0], actions.device)
+        if actions is not None:
+            if noise is None:
+                noise = self.sample_noise(actions.shape, actions.device)
 
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
-    
-        data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
-        )
-        state = state.to(self.dtype)
-        x_t = x_t.to(self.dtype)
-        time = time.to(self.dtype)
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
-        if self.merge_bagel:
-            past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
-            if self.bagel_model.config.visual_gen:
-                visual_gen_complete = np.random.rand() < 0.5
-            else:
-                visual_gen_complete = 1
-            ret = self.bagel_model(**data_batch, past_key_values=past_key_values, visual_gen_complete=visual_gen_complete)
-            sample_lens = data_batch['sample_lens'][:-1]
-            max_sample_lens = max(sample_lens)
-            bagel_pad_masks = []
-            bagel_att_masks = []
-            for batch_id in range(len(sample_lens)):
-                bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
-                bagel_pad_mask[sample_lens[batch_id]:] = 0
-                bagel_pad_masks.append(bagel_pad_mask)
-                bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
-                bagel_att_masks.append(bagel_att_mask)
-            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
-            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
+            if time is None:
+                time = self.sample_time(actions.shape[0], actions.device)
 
-            if not self.remove_pi0:
-                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
-                position_ids =  torch.cumsum(torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
-                pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
-                att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
-            else:
-                position_ids = torch.cumsum(torch.cat([bagel_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
-                pad_masks = torch.cat([bagel_pad_masks, suffix_pad_masks], dim=1)
-                att_masks = torch.cat([bagel_att_masks, suffix_att_masks], dim=1)
-        else: 
-            pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-            att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-            position_ids =  torch.cumsum(pad_masks, dim=1) - 1
-
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+            time_expanded = time[:, None, None]
+            x_t = time_expanded * noise + (1 - time_expanded) * actions
+            u_t = noise - actions
+            x_t = x_t.to(self.dtype)
+            state = state.to(self.dtype)
+            time = time.to(self.dtype)
+            suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
         
-
-        if self.merge_bagel:
-            bagel_kv_cache = ret['past_key_values']
-            bagel_sample_lens = data_batch['sample_lens']
+        if self.bagel_model.config.visual_gen:
+            visual_gen_complete = np.random.rand() < 0.5
         else:
-            bagel_kv_cache = None
-            bagel_sample_lens = None
-        (_, suffix_out), _ = self.paligemma_with_expert.forward(
-            attention_mask=att_2d_masks.bool(),
-            position_ids=position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, suffix_embs],
-            use_cache=False,
-            fill_kv_cache=False,
-            bagel_kv_cache=bagel_kv_cache,
-            bagel_sample_lens=bagel_sample_lens,
-        )
-        suffix_out = suffix_out[:, -self.config.n_action_steps :]
-        # Original openpi code, upcast attention output
-        suffix_out = suffix_out.to(dtype=self.dtype)
-        v_t = self.action_out_proj(suffix_out)
-        
-        action_losses = F.mse_loss(u_t.float(), v_t.float(), reduction="none")
+            visual_gen_complete = 1
+            
+        if get_time:
+            torch.cuda.synchronize()
+            t = Time.time()
+        ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+        if get_time:
+            dt = Time.time() - t
+
+        if self.bagel_model.config.action_gen:
+            if actions is not None:
+                v_t = self.action_out_proj(suffix_out)
+                action_losses = F.mse_loss(u_t.float(), v_t.float(), reduction="none")
         ## TODO:
-        ce = None
         loss_dict = {} 
         loss = torch.tensor(0).float().cuda()
-        if self.merge_bagel:
-            if ce is not None:
-                total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
-                if training_args.ce_loss_reweighting:
-                    ce = ce * ce_loss_weights
-                    total_ce_loss_weights = ce_loss_weights.sum()
-                    ce = ce.sum() / total_ce_loss_weights
-                else:
-                    ce = ce.sum() / total_ce_tokens
-                loss_dict["ce"] = ce.detach()
-                loss = loss + ce * self.bagel_model.config.ce_weight
+        if ret['ce'] is not None:
+            ce = ret['ce']
+            total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
+            if training_args.ce_loss_reweighting:
+                ce = ce * ce_loss_weights
+                total_ce_loss_weights = ce_loss_weights.sum()
+                ce = ce.sum() / total_ce_loss_weights
             else:
-                loss_dict["ce"] = torch.tensor(0).cuda().float()
-                total_ce_tokens = torch.tensor(0).cuda().float()
+                ce = ce.sum() / total_ce_tokens
+            loss = loss + ce * self.bagel_model.config.ce_weight
+            loss_dict['ce'] = ce.detach()
+        else:
+            loss_dict["ce"] = torch.tensor(0).cuda().float()
+            total_ce_tokens = torch.tensor(0).cuda().float()
+        
+        if ret['action_ce'] is not None:
+            action_ce = ret['action_ce']
+            action_ce = action_ce.mean()
+            if self.bagel_model.config.visual_gen and not visual_gen_complete:
+                action_ce = action_ce.detach()
+            loss = loss + action_ce
+            loss_dict['action_ce'] = action_ce.detach()
+        else:
+            loss_dict["action_ce"] = torch.tensor(0).cuda().float()
+            total_act_ce_tokens = torch.tensor(0).cuda().float()
 
-            if self.bagel_model.config.visual_gen:
-                total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
-                mse = ret['mse'].clone()
-                mse = mse.mean(dim=-1).sum() / total_mse_tokens
-                loss_dict["mse"] = mse.detach()
-                loss = loss + mse * self.bagel_model.config.mse_weight
-            else:
-                loss_dict["mse"] = torch.tensor(0).cuda().float()
-                total_mse_tokens = torch.tensor(0).cuda()
-            if self.bagel_model.config.visual_gen:
-                if not visual_gen_complete:
-                    action_losses = action_losses.detach()
-            loss_dict['action_mse'] = action_losses
+        if self.bagel_model.config.visual_gen:
+            total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
+            mse = ret['mse'].clone()
+            mse = mse.mean(dim=-1).sum() / total_mse_tokens
+            loss_dict["mse"] = mse.detach()
+            loss = loss + mse * self.bagel_model.config.mse_weight
+        else:
+            loss_dict["mse"] = torch.tensor(0).cuda().float()
+            total_mse_tokens = torch.tensor(0).cuda()
+    
+        if get_time:
+            loss_dict['time'] = dt
         return loss_dict, loss
 
     def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, batch=None, unnormalize_outputs=None) -> Tensor:
@@ -1116,7 +957,7 @@ class PI0FlowMatching(nn.Module):
         self.dtype = self.state_proj.weight.dtype
         device = torch.cuda.current_device()
         # '''
-        if self.merge_bagel:
+        if True:
             new_token_ids = self.new_token_ids
             if isinstance(new_token_ids, dict):
                 for k, v in new_token_ids.items():
@@ -1260,158 +1101,11 @@ class PI0FlowMatching(nn.Module):
                 past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
             else:
                 predict_images = [None]
-            past_key_values.key_cache = past_key_values.key_unnorm_cache
-            bagel_kv_cache = past_key_values
-            bagel_sample_lens = [newlens[-1], -1]
-        else:
-            bagel_kv_cache = None
-            bagel_sample_lens = None
-            predict_images = None
-        # '''
-
-        #################
-        '''
-        if self.merge_bagel:
-            self.bagel_model.train()
-            data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs )
-            past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
-            ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
-            sample_lens = data_batch['sample_lens'][:-1]
-            max_sample_lens = max(sample_lens)
-            bagel_pad_masks = []
-            bagel_att_masks = []
-            for batch_id in range(len(sample_lens)):
-                bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
-                bagel_pad_mask[sample_lens[batch_id]:] = 0
-                bagel_pad_masks.append(bagel_pad_mask)
-                bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
-                bagel_att_masks.append(bagel_att_mask)
-            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
-            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            bagel_kv_cache = ret['past_key_values']
-            bagel_sample_lens = data_batch['sample_lens']
-        else:
-            bagel_kv_cache = None
-            bagel_sample_lens = None
-            predict_images = None 
-        '''
-        ################
-
-
+        
         bsize = 1
         device = "cuda"
 
         if noise is None:
             actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
-        data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks,
-        )
 
-        if self.merge_bagel:
-            # '''
-            bagel_pad_masks = []
-            bagel_att_masks = []
-            batch_id = 0
-            max_sample_lens = newlens[-1]
-            bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
-            bagel_pad_masks.append(bagel_pad_mask)
-            bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
-            bagel_att_masks.append(bagel_att_mask)
-            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
-            bagel_att_masks = bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            # '''
-            if not self.remove_pi0:
-               #  bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks) ##TODO:
-                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks) 
-
-                prefix_position_ids = torch.cumsum(torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1), dim=1) - 1
-                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-                prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
-                prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
-            else:
-                prefix_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-                prefix_pad_masks = bagel_pad_masks
-                prefix_att_masks = bagel_att_masks
-                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        else:
-            prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-            prefix_offsets = None
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-         
-        # Compute image and language key value cache
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks.bool(),
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=self.config.use_cache,
-            bagel_kv_cache=bagel_kv_cache,
-            bagel_sample_lens=bagel_sample_lens,
-            fill_kv_cache=True,
-        )
-
-        dt = -1.0 / self.config.num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
-        x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                state,
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-                bagel_kv_cache,
-                bagel_sample_lens,
-                prefix_offsets,
-            )
-
-            # Euler step
-            x_t += dt * v_t
-            time += dt
-        return x_t, predict_images
-
-    def denoise_step(
-        self,
-        state,
-        prefix_pad_masks,
-        past_key_values,
-        x_t,
-        timestep,
-        bagel_kv_cache,
-        bagel_sample_lens,
-        prefix_offsets,
-    ):
-        """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, timestep)
-
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-        if prefix_offsets is None:
-            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-        outputs_embeds, _ = self.paligemma_with_expert.forward(
-            attention_mask=full_att_2d_masks.bool(),
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=[None, suffix_embs],
-            use_cache=self.config.use_cache,
-            fill_kv_cache=False,
-            bagel_kv_cache=None,
-            bagel_sample_lens=None,
-        )
-        suffix_out = outputs_embeds[1]
-        suffix_out = suffix_out[:, -self.config.n_action_steps :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
-        v_t = self.action_out_proj(suffix_out)
-        return v_t

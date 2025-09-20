@@ -240,10 +240,9 @@ class Bagel(PreTrainedModel):
         packed_timesteps: Optional[torch.LongTensor] = None,
         mse_loss_indexes: Optional[torch.BoolTensor] = None,
         # for action generation
-        packed_action_tokens: Optional[torch.Tensor] = None,
-        packed_action_position_ids: Optional[torch.LongTensor] = None,
-        packed_action_token_indexes: Optional[torch.LongTensor] = None,
-        action_loss_indexes: Optional[torch.BoolTensor] = None,
+        packed_act_tokens: Optional[torch.Tensor] = None,
+        packed_act_token_indexes: Optional[torch.LongTensor] = None,
+        act_ce_loss_indexes: Optional[torch.BoolTensor] = None,
         past_key_values = None,
         visual_gen_complete = False,
         **kwargs,
@@ -277,11 +276,6 @@ class Bagel(PreTrainedModel):
         packed_sequence = packed_text_embedding.new_zeros(size=(sequence_length, self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
         if nested_attention_masks is None:
-            # if torch.cuda.current_device() == 0:
-            #     import ipdb;ipdb.set_trace()
-            # else:
-            #     while True: pass
-
             sparse_mask = create_sparse_mask(sample_lens, split_lens, attn_modes, packed_text_embedding.device)
             seqlen = sum(sample_lens)
             block_mask = create_block_mask(
@@ -327,7 +321,10 @@ class Bagel(PreTrainedModel):
             latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
             packed_latent = self.vae2llm(packed_latent) + packed_timestep_embeds + latent_token_pos_emb
             packed_sequence[packed_vae_token_indexes] = packed_latent
-
+        
+        if self.config.action_gen:
+            packed_action_embedding = self.language_model.model.embed_tokens(packed_act_tokens)
+            packed_sequence[packed_act_token_indexes] = packed_action_embedding
 
         extra_inputs = {}
         if self.use_moe:
@@ -337,7 +334,7 @@ class Bagel(PreTrainedModel):
             extra_inputs.update(
                 packed_und_token_indexes=packed_und_token_indexes,
                 packed_gen_token_indexes=packed_vae_token_indexes,
-                packed_action_token_indexes=packed_action_token_indexes,
+                packed_act_token_indexes=packed_act_token_indexes,
             )
         last_hidden_state, past_key_values = self.language_model(
             packed_sequence=packed_sequence,
@@ -358,7 +355,11 @@ class Bagel(PreTrainedModel):
         if ce_loss_indexes is not None:
             packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
             ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
-        return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state, past_key_values=past_key_values)
+        action_ce = None
+        if act_ce_loss_indexes is not None:
+            packed_act_ce_preds = self.language_model.lm_head(last_hidden_state[act_ce_loss_indexes])
+            action_ce = F.cross_entropy(packed_act_ce_preds, packed_act_tokens, reduction="none")
+        return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state, past_key_values=past_key_values, action_ce=action_ce)
 
     def prepare_prompts(self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids):
         packed_text_ids = list()
@@ -1028,7 +1029,7 @@ class Bagel(PreTrainedModel):
 
     def prepare_action(self, curr_kvlens, curr_rope, new_token_ids):
         packed_text_ids, packed_text_indexes = list(), list()
-        packed_action_position_ids, packed_action_token_indexes = list(), list()
+        packed_act_position_ids, packed_act_token_indexes = list(), list()
         packed_query_position_ids, packed_seqlens, packed_query_indexes = list(), list(), list()
         packed_key_value_indexes = list()
         newlens = list()
@@ -1046,7 +1047,7 @@ class Bagel(PreTrainedModel):
             _curr += 1
 
             num_action_tokens = self.action_horizon
-            packed_action_token_indexes.extend(range(_curr, _curr + num_action_tokens))
+            packed_act_token_indexes.extend(range(_curr, _curr + num_action_tokens))
             packed_query_indexes.extend(range(curr, curr + num_action_tokens))
             curr += num_action_tokens
             _curr += num_action_tokens
@@ -1066,7 +1067,7 @@ class Bagel(PreTrainedModel):
         generation_input = {
             "packed_text_ids": torch.tensor(packed_text_ids, dtype=torch.long),
             "packed_text_indexes": torch.tensor(packed_text_indexes, dtype=torch.long),
-            "packed_action_token_indexes": torch.tensor(packed_action_token_indexes, dtype=torch.long),
+            "packed_act_token_indexes": torch.tensor(packed_act_token_indexes, dtype=torch.long),
             "packed_seqlens": torch.tensor(packed_seqlens, dtype=torch.int),
             "packed_query_position_ids": torch.tensor(packed_query_position_ids, dtype=torch.long),
             "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
@@ -1158,7 +1159,7 @@ class Bagel(PreTrainedModel):
         past_key_values: NaiveCache,
         key_values_lens: torch.IntTensor,
         packed_key_value_indexes: torch.LongTensor,
-        packed_action_token_indexes: torch.LongTensor,
+        packed_act_token_indexes: torch.LongTensor,
         packed_query_position_ids: torch.LongTensor,
         packed_query_indexes: torch.LongTensor,
     ):
@@ -1166,13 +1167,13 @@ class Bagel(PreTrainedModel):
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
         action_token_pos_emb = self.latent_pos_embed(packed_query_position_ids[1:-1] - packed_query_position_ids[1])
-        packed_sequence[packed_action_token_indexes] = action_token_pos_emb
+        packed_sequence[packed_act_token_indexes] = action_token_pos_emb
         
         extra_inputs = {}
         if self.use_moe:
             extra_inputs = {
                 "mode": "action",
-                "packed_action_token_indexes": packed_action_token_indexes,
+                "packed_act_token_indexes": packed_act_token_indexes,
                 "packed_text_indexes": packed_text_indexes,
             }  
 

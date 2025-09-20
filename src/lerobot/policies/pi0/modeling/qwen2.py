@@ -127,6 +127,7 @@ class Qwen2Config(PretrainedConfig):
         self,
         vocab_size=151936,
         hidden_size=4096,
+        act_hidden_size=256,
         intermediate_size=22016,
         num_hidden_layers=32,
         num_attention_heads=32,
@@ -150,6 +151,7 @@ class Qwen2Config(PretrainedConfig):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
+        self.act_hidden_size = act_hidden_size
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
@@ -412,6 +414,7 @@ class Qwen2Attention(nn.Module):
             )
 
         self.hidden_size = config.hidden_size
+        self.act_hidden_size = config.act_hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = self.hidden_size // self.num_heads
         self.num_key_value_heads = config.num_key_value_heads

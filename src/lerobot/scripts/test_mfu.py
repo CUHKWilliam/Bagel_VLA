@@ -60,10 +60,14 @@ import os
 import numpy as np
 import cv2
 from lerobot.configs.train import TrainPipelineConfig
+from tqdm import tqdm
+import copy
+from lerobot.policies.pi0.dataset_base import PackedDataset, SimpleCustomBatch
+from torch.profiler import profile, ProfilerActivity, record_function
 
-theoretical_tflops = 1979   # TFLOPS
-warmup_steps = 5            # Steps to warm up the GPU
-benchmark_steps = 20        # Steps to measure
+
+TFLOPS_PER_GPU = 989.4   # TFLOPS
+
 
 def update_policy(
     policy: PreTrainedPolicy,
@@ -71,16 +75,17 @@ def update_policy(
     accelerator: Accelerator,
     step: int = 0,
 ) -> tuple[MetricsTracker, dict]:
-    start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
-
     policy.train()
-    loss, output_dict = policy.forward(batch)
+    loss, output_dict = policy.forward(batch, get_time=True)
+    dt = output_dict['time']
     # policy.select_action(batch)
+    torch.cuda.synchronize()
+    t2 = time.time()
     policy.backward(loss)
-    policy.step()
-    
-    return output_dict
+    torch.cuda.synchronize()
+    # dt += time.time() - t2
+    return dt
 
 
 @parser.wrap()
@@ -258,28 +263,43 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"Number of processes: {accelerator.num_processes}")
         logging.info(f"Device: {accelerator.device}")
         logging.info(f"Mixed precision: {accelerator.mixed_precision}")
+        flops_per_token = 2*num_total_params
    
     policy.train()
     if accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
     # Create iterator from dataloader
     dl_iter = iter(dataloader)
-
-    for _ in range(step, cfg.steps):
-        start_time = time.perf_counter()
-        # Get next batch, cycling through dataloader if needed
+    time_total = 0
+    seq_len_total = 0
+    for step in tqdm(range(20)):
         try:
             batch = next(dl_iter)
+            batch2 = copy.deepcopy(batch)
         except StopIteration:
             dl_iter = iter(dataloader)
             batch = next(dl_iter)
-        train_tracker.dataloading_s = time.perf_counter() - start_time
-        output_dict = update_policy(
+        t = update_policy(
                 policy,
                 batch,
                 accelerator,
                 step,
         )
+        if step < 10:
+            continue
+        time_total += t
+        datas = policy.dataset(batch2)
+        data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        seq_length = data_batch['sequence_length']
+        seq_len_total += seq_length
+
+        if accelerator.is_main_process:
+            print(seq_length)
+            tokens_per_sec = seq_len_total / time_total
+            achieved_flops = tokens_per_sec * flops_per_token
+            theroretical_flops = TFLOPS_PER_GPU * 1e12
+            mfu = achieved_flops / theroretical_flops
+            print(f"MFU: {mfu}")
 
 if __name__ == "__main__":
     init_logging()
