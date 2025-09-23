@@ -1039,8 +1039,7 @@ class Bagel(PreTrainedModel):
         for curr_kvlen, curr_position_id in zip(curr_kvlens, curr_rope):
             packed_key_value_indexes.extend(range(curr, curr + curr_kvlen))
             curr += curr_kvlen
-
-            packed_text_ids.append(new_token_ids['boa_token_id'])
+            packed_text_ids.append(torch.tensor(new_token_ids['boa_token_id']).long().cuda())
             packed_text_indexes.append(_curr)
             packed_query_indexes.append(curr)
             curr += 1
@@ -1057,7 +1056,7 @@ class Bagel(PreTrainedModel):
             packed_query_indexes.append(curr)
             curr += 1
             _curr += 1
-            
+
 
             packed_query_position_ids.extend(range(0, num_action_tokens + 2))
             packed_seqlens.append(num_action_tokens + 2)
@@ -1074,8 +1073,7 @@ class Bagel(PreTrainedModel):
             "packed_query_indexes": torch.tensor(packed_query_indexes, dtype=torch.long),
             "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
         }
-
-        return generation_input
+        return generation_input, newlens, new_rope
 
     @torch.no_grad
     def generate_text(
@@ -1161,36 +1159,74 @@ class Bagel(PreTrainedModel):
         packed_key_value_indexes: torch.LongTensor,
         packed_act_token_indexes: torch.LongTensor,
         packed_query_position_ids: torch.LongTensor,
-        packed_query_indexes: torch.LongTensor,
+        new_token_ids,
+        packed_query_indexes,
     ):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
-        action_token_pos_emb = self.latent_pos_embed(packed_query_position_ids[1:-1] - packed_query_position_ids[1])
-        packed_sequence[packed_act_token_indexes] = action_token_pos_emb
-        
-        extra_inputs = {}
-        if self.use_moe:
-            extra_inputs = {
+        step = 0
+        generated_sequence = []
+        curr_tokens = torch.tensor(new_token_ids['boa_token_id']).int().cuda()
+        max_length = self.action_horizon + 1
+        while step < max_length:
+            generated_sequence.append(curr_tokens)
+            packed_text_embedding = self.language_model.model.embed_tokens(curr_tokens)
+            query_lens = torch.ones_like(curr_tokens)
+            packed_query_indexes = torch.cumsum(key_values_lens, dim=0) + torch.arange(
+                0, len(key_values_lens),
+                device=key_values_lens.device,
+                dtype=key_values_lens.dtype
+            )
+
+            uppacked = list(packed_key_value_indexes.split(key_values_lens.tolist(), dim=0))
+            for i in range(len(uppacked)):
+                uppacked[i] += i
+            packed_key_value_indexes = torch.cat(uppacked, dim=0)
+
+            extra_inputs = {}
+            if self.use_moe:
+                extra_inputs = {
                 "mode": "action",
                 "packed_act_token_indexes": packed_act_token_indexes,
                 "packed_text_indexes": packed_text_indexes,
-            }  
+            }
 
-        output = self.language_model.forward_inference(
-            packed_query_sequence=packed_sequence,
-            query_lens=packed_seqlens,
-            packed_query_position_ids=packed_query_position_ids,
-            packed_query_indexes=packed_query_indexes,
-            past_key_values=past_key_values,
-            key_values_lens=key_values_lens,
-            packed_key_value_indexes=packed_key_value_indexes,
-            update_past_key_values=True,
-            is_causal=False,
-            **extra_inputs,
-        )
-        return output.packed_query_sequence
+            output = self.language_model.forward_inference(
+                packed_query_sequence=packed_text_embedding,
+                query_lens=query_lens,
+                packed_query_position_ids=packed_query_position_ids,
+                packed_query_indexes=packed_query_indexes,
+                past_key_values=past_key_values,
+                key_values_lens=key_values_lens,
+                packed_key_value_indexes=packed_key_value_indexes,
+                update_past_key_values=True,
+                is_causal=True,
+                **extra_inputs,
+            )
+            past_key_values = output.past_key_values
+            packed_query_sequence = output.packed_query_sequence
+            pred_logits = self.language_model.lm_head(packed_query_sequence)
 
+            do_sample = False ## TODO:
+            if do_sample:
+                probs = nn.functional.softmax(pred_logits / temperature, dim=-1)
+                curr_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            else:
+                curr_tokens = torch.argmax(pred_logits, dim=-1)
+
+            uppacked = list(packed_key_value_indexes.split(key_values_lens.tolist(), dim=0))
+            for i in range(len(uppacked)):
+                uppacked[i] = torch.cat(
+                    [uppacked[i], torch.tensor([uppacked[i][-1] + 1], device=uppacked[i].device)], dim=0
+                )
+            packed_key_value_indexes = torch.cat(uppacked, dim=0)
+            key_values_lens = key_values_lens + 1
+            packed_query_position_ids = packed_query_position_ids + 1
+            step += 1
+        import ipdb;ipdb.set_trace()
+        return torch.stack([i.cuda for i in generated_sequence], dim=0)
+    
     # for evaluation
     @torch.no_grad()
     def chat(

@@ -142,7 +142,7 @@ class DataArguments:
 @dataclass
 class ModelArguments:
     model_path: str = field(
-        default="/root/lerobot/weight/BAGEL-7B-MoT",
+        default="./weight2/BAGEL-7B-MoT",
         metadata={"help": "Path of the pretrained BAGEL model."}
     )
     llm_path: str = field(
@@ -569,15 +569,10 @@ class PI0Policy(PreTrainedPolicy):
             state = self.prepare_state(batch)
 
             actions, predict_image = self.model.sample_actions(
-                state, noise=noise, batch=batch
+                batch, self.dataset.dataset.vit_transform, self.dataset.dataset.transform, self.dataset.tokenizer
             )
 
-            # Unpad actions
-            original_action_dim = self.config.action_feature.shape[0]
-            actions = actions[:, :, :original_action_dim]
-
-            actions = self.unnormalize_outputs({"action": actions})["action"]
-
+            actions = self.extract_actions(actions, self.model.bagel_model.action_horizon, self.model.bagel_model.action_dim)
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
 
@@ -608,6 +603,87 @@ class PI0Policy(PreTrainedPolicy):
         out = self.model.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
         return out
     
+    def extract_actions(self, tokens: torch.Tensor, action_horizon: int, action_dim: int) -> torch.Tensor:
+        """
+        Extracts actions from predicted output tokens using the FAST model.
+
+        Args:
+            tokens (torch.Tensor): The input tensor of tokenized outputs.
+            action_horizon (int): The number of timesteps for actions.
+            action_dim (int): The dimensionality of each action.
+
+        Returns:
+            torch.Tensor: The extracted actions as a tensor of shape (action_horizon, action_dim).
+        """                       
+        cleaned_tokens = tokens[1:-1]
+        action_tokens = self._act_tokens_to_bagel_tokens(cleaned_tokens)
+        decoded_actions = torch.tensor(
+                self.decode_actions_with_fast(
+                    action_tokens.unsqueeze(0).tolist(),
+                    time_horizon=action_horizon,
+                    action_dim=action_dim,
+                    relaxed_decoding=True,
+                ),
+            ).cuda()
+        return decoded_actions
+
+    def decode_actions_with_fast(
+        self,
+        tokens: list[list[int]],
+        *,
+        time_horizon: int | None = None,
+        action_dim: int | None = None,
+        relaxed_decoding: bool = True,
+    ) -> np.array:
+        """
+        Adapt original decoding in FAST to always return actions instead of zeros.
+        """
+        self.time_horizon = (
+            time_horizon or self.fast_tokenizer.time_horizon or self.fast_tokenizer.called_time_horizon
+        )
+        self.action_dim = (
+            action_dim or self.fast_tokenizer.action_dim or self.fast_tokenizer.called_action_dim
+        )
+
+        # Cache the time horizon and action dimension for the next call
+        self.called_time_horizon = self.time_horizon
+        self.called_action_dim = self.action_dim
+
+        assert self.time_horizon is not None and self.action_dim is not None, (
+            "Tokenizer not initialized, call encode() once or pass in time_horizon and action_dim."
+        )
+
+        decoded_actions = []
+        for token in tokens:
+            try:
+                decoded_tokens = self.fast_tokenizer.bpe_tokenizer.decode(token)
+                decoded_dct_coeff = np.array(list(map(ord, decoded_tokens))) + self.fast_tokenizer.min_token
+                if relaxed_decoding:
+                    # Expected sequence length
+                    expected_seq_len = self.time_horizon * self.action_dim
+                    diff = expected_seq_len - decoded_dct_coeff.shape[0]
+                    # Apply truncation if too long
+                    if diff < 0:
+                        decoded_dct_coeff = decoded_dct_coeff[:expected_seq_len]  # Truncate on the right
+                    # Apply padding if too short
+                    elif diff > 0:
+                        decoded_dct_coeff = np.pad(
+                            decoded_dct_coeff, (0, diff), mode="constant", constant_values=0
+                        )
+
+                decoded_dct_coeff = decoded_dct_coeff.reshape(-1, self.action_dim)
+                assert decoded_dct_coeff.shape == (
+                    self.time_horizon,
+                    self.action_dim,                                                                                                                                                                                                                                                            ), (
+                    f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({self.time_horizon}, {self.action_dim})"
+                )
+            except Exception as e:
+                print(f"Error decoding tokens: {e}")
+                print(f"Tokens: {token}")
+                decoded_dct_coeff = np.zeros((self.time_horizon, self.action_dim))
+            decoded_actions.append(idct(decoded_dct_coeff / self.fast_tokenizer.scale, axis=0, norm="ortho"))
+        return np.stack(decoded_actions)
+
     def tokenize_action(self, actions):
         actions_norm = self.normalize_actions(actions)
         actions_pad = F.pad(
@@ -952,7 +1028,7 @@ class PI0FlowMatching(nn.Module):
             loss_dict['time'] = dt
         return loss_dict, loss
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, batch=None, unnormalize_outputs=None) -> Tensor:
+    def sample_actions(self, batch, vit_transform, vae_transform, tokenizer) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         self.dtype = self.state_proj.weight.dtype
         device = torch.cuda.current_device()
@@ -981,7 +1057,7 @@ class PI0FlowMatching(nn.Module):
                             curr_kvlens=newlens,
                             curr_rope=new_rope,
                             images=[image],
-                            transforms = self.dataset.dataset.transform,
+                            transforms = vae_transform,
                             new_token_ids=new_token_ids,
                         )
                         for k, v in generation_input.items():
@@ -992,7 +1068,7 @@ class PI0FlowMatching(nn.Module):
                         curr_kvlens=newlens,
                         curr_rope=new_rope,
                         images=[image],
-                        transforms=self.dataset.dataset.vit_transform,
+                        transforms=vit_transform,
                         new_token_ids=new_token_ids,
                     )
 
@@ -1010,7 +1086,7 @@ class PI0FlowMatching(nn.Module):
                 curr_kvlens=newlens,
                 curr_rope=new_rope, 
                 prompts=[prompt],
-                tokenizer=self.dataset.tokenizer, 
+                tokenizer=tokenizer, 
                 new_token_ids=new_token_ids,
             )
             for k, v in generation_input.items():
@@ -1085,7 +1161,7 @@ class PI0FlowMatching(nn.Module):
                     tmpimage = Image.fromarray(tmpimage)
                     image_list.append(tmpimage)
                 predict_images = image_list
-                predict_images[0].save('./debug4.png')
+                predict_images[0].save('./debug_predict_image.png')
                 # import ipdb;ipdb.set_trace()
                 generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
                     curr_kvlens=newlens,
@@ -1101,11 +1177,15 @@ class PI0FlowMatching(nn.Module):
                 past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
             else:
                 predict_images = [None]
+            generation_input, newlens, new_rope = self.bagel_model.prepare_action(
+                curr_kvlens=newlens,
+                curr_rope=new_rope,
+                new_token_ids=new_token_ids,
+            )
+            for k, v in generation_input.items():
+                if torch.is_tensor(v):
+                    generation_input[k] = v.to(device)
+            output = self.bagel_model.generate_action(past_key_values=past_key_values, new_token_ids=new_token_ids, **generation_input)
+            action_tokens = output.argmax(1)
+            return action_tokens, predict_images
         
-        bsize = 1
-        device = "cuda"
-
-        if noise is None:
-            actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
-            noise = self.sample_noise(actions_shape, device)
-

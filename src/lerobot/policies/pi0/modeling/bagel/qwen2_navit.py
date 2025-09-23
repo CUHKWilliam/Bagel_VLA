@@ -406,7 +406,7 @@ class PackedAttentionMoTAct(Qwen2Attention):
             self.k_proj_moe_gen = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
             self.v_proj_moe_gen = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
             self.o_proj_moe_gen = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-
+        
         if action_gen:
             self.q_proj_moe_act = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=True)
             self.k_proj_moe_act = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
@@ -600,23 +600,28 @@ class PackedAttentionMoTAct(Qwen2Attention):
             packed_act_query_sequence = packed_query_sequence[packed_act_token_indexes]
 
             packed_query_states[packed_text_indexes] = self.q_proj(packed_text_query_sequence)
-            packed_query_states[packed_act_token_indexes] = self.q_proj_moe_act(packed_act_query_sequence)
+            if self.action_gen:
+                packed_query_states[packed_act_token_indexes] = self.q_proj_moe_act(packed_act_query_sequence)
 
             packed_key_states[packed_text_indexes] = self.k_proj(packed_text_query_sequence)
-            packed_key_states[packed_act_token_indexes] = self.k_proj_moe_act(packed_act_query_sequence)
+            if self.action_gen:
+                packed_key_states[packed_act_token_indexes] = self.k_proj_moe_act(packed_act_query_sequence)
 
             packed_value_states[packed_text_indexes] = self.v_proj(packed_text_query_sequence)
-            packed_value_states[pakced_act_token_indexes] = self.k_proj_moe_act(packed_act_query_sequence)
+            if self.action_gen:
+                packed_value_states[packed_act_token_indexes] = self.v_proj_moe_act(packed_act_query_sequence)
 
             packed_query_states = packed_query_states.view(-1, self.num_heads, self.head_dim)
             packed_key_states = packed_key_states.view(-1, self.num_key_value_heads, self.head_dim)
             packed_value_states = packed_value_states.view(-1, self.num_key_value_heads, self.head_dim)
 
             packed_query_states[packed_text_indexes] = self.q_norm(packed_query_states[packed_text_indexes])
-            packed_query_states[pakced_act_token_indexes] = self.q_norm_moe_act(packed_query_states[packed_act_token_indexes])
+            if self.action_gen:
+                packed_query_states[packed_act_token_indexes] = self.q_norm_moe_act(packed_query_states[packed_act_token_indexes])
 
             packed_key_states[packed_text_indexes] = self.k_norm(packed_key_states[packed_text_indexes])
-            packed_key_states[packed_act_token_indexes] = self.k_norm_moe_act(packed_key_states[packed_act_token_indexes])
+            if self.action_gen:
+                packed_key_states[packed_act_token_indexes] = self.k_norm_moe_act(packed_key_states[packed_act_token_indexes])
         
         packed_cos, packed_sin = packed_query_position_embeddings
         packed_query_states, packed_key_states = apply_rotary_pos_emb(
@@ -644,17 +649,17 @@ class PackedAttentionMoTAct(Qwen2Attention):
 
         cu_seqlens_q = torch.nn.functional.pad(torch.cumsum(query_lens, dim=0), (1, 0))
         cu_seqlens_k = torch.nn.functional.pad(torch.cumsum(key_values_lens, dim=0), (1, 0))
-
+        
         packed_attn_output = flash_attn_varlen_func(
-            q=packed_query_states,
-            k=merged_key_states,
-            v=merged_value_states,
+            q=packed_query_states.to(torch.bfloat16),
+            k=merged_key_states.to(torch.bfloat16),
+            v=merged_value_states.to(torch.bfloat16),
             cu_seqlens_q=cu_seqlens_q.to(torch.int32),
             cu_seqlens_k=cu_seqlens_k.to(torch.int32),
             max_seqlen_q=max(query_lens).item(),
             max_seqlen_k=max(key_values_lens).item(),
             causal=is_causal,
-        )
+        ).to(self.o_proj.weight.dtype)
         packed_attn_output = packed_attn_output.reshape(-1, self.hidden_size)
         if mode == 'und':
             packed_attn_output = self.o_proj(packed_attn_output)
@@ -663,7 +668,8 @@ class PackedAttentionMoTAct(Qwen2Attention):
             packed_attn_output[packed_vae_token_indexes] = self.o_proj_moe_gen(packed_attn_output[packed_vae_token_indexes])
         elif mode == "action":
             packed_attn_output[packed_text_indexes] = self.o_proj(packed_attn_output[packed_text_indexes])
-            packed_attn_output[packed_act_token_indexes] = self.o_proj_moe_act(packed_attn_output[packed_act_token_indexes])
+            if self.action_gen:
+                packed_attn_output[packed_act_token_indexes] = self.o_proj_moe_act(packed_attn_output[packed_act_token_indexes])
 
         if update_past_key_values:
             past_key_values.key_cache[self.layer_idx] = merged_key_states
@@ -899,15 +905,15 @@ class PackedAttentionMoT(Qwen2Attention):
         cu_seqlens_k = torch.nn.functional.pad(torch.cumsum(key_values_lens, dim=0), (1, 0))
 
         packed_attn_output = flash_attn_varlen_func(
-            q=packed_query_states,# .to(torch.bfloat16),
-            k=merged_key_states,# .to(torch.bfloat16),
-            v=merged_value_states,# .to(torch.bfloat16),
+            q=packed_query_states.to(torch.bfloat16),
+            k=merged_key_states.to(torch.bfloat16),
+            v=merged_value_states.to(torch.bfloat16),
             cu_seqlens_q=cu_seqlens_q.to(torch.int32),
             cu_seqlens_k=cu_seqlens_k.to(torch.int32),
             max_seqlen_q=max(query_lens).item(),
             max_seqlen_k=max(key_values_lens).item(),
             causal=is_causal,
-        )# .to(self.o_proj.weight.dtype)
+        ).to(self.o_proj.weight.dtype)
         packed_attn_output = packed_attn_output.reshape(-1, self.hidden_size)
         if mode == 'und':
             packed_attn_output = self.o_proj(packed_attn_output)
@@ -1163,15 +1169,18 @@ class Qwen2MoTDecoderLayer(nn.Module):
             packed_query_sequence = packed_query_sequence_
         elif mode == "action":
             packed_text_query_sequence = packed_query_sequence[packed_text_indexes]
-            packed_act_query_sequence = packed_query_sequence[packed_act_indexes]
+            if self.action_gen:
+                packed_act_query_sequence = packed_query_sequence[packed_act_indexes]
 
             packed_text_query_sequence = self.post_attention_layernorm(packed_text_query_sequence)
-            packed_act_query_sequence = self.post_attention_layernorm_moe_act(packed_act_query_sequence)
+            if self.action_gen:
+                packed_act_query_sequence = self.post_attention_layernorm_moe_act(packed_act_query_sequence)
 
             packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
 
             packed_query_sequence_[packed_text_indexes] = self.mlp(packed_text_query_sequence)
-            packed_query_sequence_[packed_act_token_indexes] = self.mlp_moe_act(packed_act_query_sequence)
+            if self.action_gen:
+                packed_query_sequence_[packed_act_token_indexes] = self.mlp_moe_act(packed_act_query_sequence)
 
             packed_query_sequence = packed_query_sequence_
 
@@ -1204,12 +1213,14 @@ class Qwen2MoTDecoderLayer(nn.Module):
             packed_query_sequence_[packed_text_indexes] = self.input_layernorm(packed_query_sequence[packed_text_indexes])
             packed_query_sequence_[packed_vae_token_indexes] = self.input_layernorm_moe_gen(packed_query_sequence[packed_vae_token_indexes])
             packed_query_sequence = packed_query_sequence_
-        elif mode == "action":
+        elif mode == "action" and self.action_gen:
             packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
             packed_query_sequence_[packed_text_indexes] = self.input_layernorm(packed_query_sequence[packed_text_indexes])
-            packed_query_sequence_[packed_act_token_indexes] = self.input_layernorm_moe_act(packed_query_sequence[packed_act_token_indexes])
+            if self.action_gen:
+                packed_query_sequence_[packed_act_token_indexes] = self.input_layernorm_moe_act(packed_query_sequence[packed_act_token_indexes])
             packed_query_sequence = packed_query_sequence_
-            
+        
+        import ipdb;ipdb.set_trace()    
         # Self Attention
         packed_query_sequence, past_key_values = self.self_attn(
             packed_query_sequence=packed_query_sequence,
@@ -1242,14 +1253,17 @@ class Qwen2MoTDecoderLayer(nn.Module):
             packed_query_sequence_[packed_text_indexes] = self.mlp(packed_text_query_sequence)
             packed_query_sequence_[packed_vae_token_indexes] = self.mlp_moe_gen(packed_vae_query_sequence)
             packed_query_sequence = packed_query_sequence_
-        elif mode == "action":
+        elif mode == "action" and self.action_gen:
             packed_text_query_sequence = packed_query_sequence[packed_text_indexes]
-            packed_act_query_sequence = packed_query_sequence[packed_act_token_indexes]
+            if self.action_gen:
+                packed_act_query_sequence = packed_query_sequence[packed_act_token_indexes]
             packed_text_query_sequence = self.post_attention_layernorm(packed_text_query_sequence)
-            packed_act_query_sequence = self.post_attention_layernorm_moe_act(packed_act_query_sequence)
+            if self.action_gen:
+                packed_act_query_sequence = self.post_attention_layernorm_moe_act(packed_act_query_sequence)
             packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
             packed_query_sequence_[packed_text_indexes] = self.mlp(packed_text_query_sequence)
-            packed_query_sequence_[packed_act_token_indexes] = self.mlp_moe_act(packed_act_query_sequence)
+            if self.action_gen:
+                packed_query_sequence_[packed_act_token_indexes] = self.mlp_moe_act(packed_act_query_sequence)
             packed_query_sequence = packed_query_sequence_
 
         packed_query_sequence = residual + packed_query_sequence
@@ -1357,7 +1371,8 @@ class Qwen2MoEDecoderLayer(nn.Module):
         elif mode == "action":
             packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
             packed_query_sequence_[packed_text_indexes] = self.mlp(packed_query_sequence[packed_text_indexes])
-            packed_query_sequence_[packed_act_token_indexes] = self.mlp_moe_gen2(packed_query_sequence[packed_act_token_indexes])
+            if self.action_gen:
+                packed_query_sequence_[packed_act_token_indexes] = self.mlp_moe_gen2(packed_query_sequence[packed_act_token_indexes])
             packed_query_sequence = packed_query_sequence_
         packed_query_sequence = residual + packed_query_sequence
 
@@ -1390,7 +1405,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
         if action_gen:
             self.norm_moe_act = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen2RotaryEmbedding(config=config)
-
+        self.action_gen = action_gen
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1519,7 +1534,8 @@ class Qwen2Model(Qwen2PreTrainedModel):
             elif mode == "action":
                 packed_query_sequence_ = torch.zeros_like(packed_query_sequence)
                 packed_query_sequence_[packed_text_indexes] = self.norm(packed_query_sequence[packed_text_indexes])
-                packed_query_sequence_[packed_act_token_indexes] = self.norm_moe_gen2(packed_query_sequence[packed_act_token_indexes])
+                if self.action_gen:
+                    packed_query_sequence_[packed_act_token_indexes] = self.norm_moe_act(packed_query_sequence[packed_act_token_indexes])
                 packed_query_sequence = packed_query_sequence_
         else:
             packed_query_sequence = self.norm(packed_query_sequence)
