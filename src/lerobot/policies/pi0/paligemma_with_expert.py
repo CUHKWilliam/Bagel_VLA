@@ -89,9 +89,9 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                     "hidden_size": 2048,
                     "intermediate_size": 16384,
                     "model_type": "gemma",
-                    "num_attention_heads": 4,
-                    "num_hidden_layers": 27,
-                    "num_image_tokens": 128,
+                    "num_attention_heads": 8,
+                    "num_hidden_layers": 18,
+                    "num_image_tokens": 256,
                     "num_key_value_heads": 1,
                     "torch_dtype": "float32",
                     "vocab_size": 257152,
@@ -134,7 +134,7 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 max_position_embeddings=8192,
                 model_type="gemma",
                 num_attention_heads=8,
-                num_hidden_layers=27,
+                num_hidden_layers=18,
                 num_key_value_heads=1,
                 pad_token_id=0,
                 rms_norm_eps=1e-06,
@@ -242,11 +242,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         bagel_kv_cache=None,
         bagel_sample_lens=None,
     ):
-        if not self.remove_pi0:
-            models = [self.paligemma.language_model, self.gemma_expert.model]
-        else:
-            models = [None, self.gemma_expert.model]
-
+        models = [self.paligemma.language_model, self.gemma_expert.model]
         for hidden_states in inputs_embeds:
             # TODO this is very inefficient
             # dtype is always the same, batch size too (if > 1 len)
@@ -260,8 +256,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
         # RMSNorm
         num_layers = self.config.paligemma_config.text_config.num_hidden_layers
-        # head_dim = self.config.paligemma_config.text_config.head_dim
-        head_dim = 128
+        head_dim = self.config.paligemma_config.text_config.head_dim
         for layer_idx in range(num_layers):
             query_states = []
             key_states = []
@@ -282,48 +277,18 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
 
                 # hidden_states = hidden_states.to(dtype=torch.bfloat16)
-                query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape)[:, :, :4, :128]
-                key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape)[:, :, :4, :128]
-                value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape)[:, :, :4, :128]
+                query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape)
+                key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape)
+                value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape)
 
                 query_states.append(query_state)
                 key_states.append(key_state)
                 value_states.append(value_state)
-
-            if bagel_kv_cache is not None:
-                curr_len  = 0 
-                max_sample_len = max(bagel_sample_lens[:-1])
-                batch_bagel_key_states = []
-                batch_bagel_query_states = []
-                batch_bagel_value_states = []
-                for batch_id in range(len(bagel_sample_lens) - 1):
-                    bagel_key_state = bagel_kv_cache.key_cache[layer_idx][curr_len: curr_len + bagel_sample_lens[batch_id]]
-                    bagel_query_state = bagel_kv_cache.key_cache[layer_idx][curr_len: curr_len + bagel_sample_lens[batch_id]]
-                    bagel_value_state = bagel_kv_cache.value_cache[layer_idx][curr_len: curr_len + bagel_sample_lens[batch_id]]
-                    seq_len, num_heads, feat_dim = bagel_key_state.size()
-                    padding_key = torch.zeros((max_sample_len - len(bagel_key_state), bagel_key_state.size(1), bagel_key_state.size(2))).float().cuda()
-                    padding_query = torch.zeros((max_sample_len - len(bagel_query_state), bagel_query_state.size(1), bagel_query_state.size(2))).float().cuda()
-                    padding_value = torch.zeros((max_sample_len - len(bagel_value_state), bagel_value_state.size(1), bagel_value_state.size(2))).float().cuda()
-                    bagel_key_state = torch.cat([bagel_key_state, padding_key], dim=0)
-                    bagel_query_state = torch.cat([bagel_query_state, padding_query], dim=0)
-                    bagel_value_state = torch.cat([bagel_value_state, padding_value], dim=0)
-                    batch_bagel_key_states.append(bagel_key_state)
-                    batch_bagel_value_states.append(bagel_value_state)
-                    batch_bagel_query_states.append(bagel_query_state)
-                    curr_len += bagel_sample_lens[batch_id]
-                batch_bagel_key_states, batch_bagel_query_states, batch_bagel_value_states = torch.stack(batch_bagel_key_states, dim=0), torch.stack(batch_bagel_query_states, dim=0), torch.stack(batch_bagel_value_states, dim=0)
-                key_states = [batch_bagel_key_states] + key_states
-                query_states = [batch_bagel_query_states] + query_states
-                value_states = [batch_bagel_value_states] + value_states
             
             # B,L,H,D with L sequence length, H number of heads, D head dim
             # concatenate on the number of embeddings/tokens
             query_states = torch.cat(query_states, dim=1)
-            if len(key_states) == 2:
-                key_states[-1] = key_states[-1].repeat((1, 1, key_states[0].size(-2), 1))
             key_states = torch.cat(key_states, dim=1)
-            if len(value_states) == 2:
-                value_states[-1] = value_states[-1].repeat((1, 1, value_states[0].size(-2), 1))
             value_states = torch.cat(value_states, dim=1)
 
             query_states = apply_rope(query_states, position_ids)
@@ -344,13 +309,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     # the max len, then we (for instance) double the cache size. This implementation already exists
                     # in `transformers`. (molbap)
                     key_states = [past_key_values[layer_idx]["key_states"], key_states]
-                    key_states[-1] = key_states[-1].repeat((1, 1, key_states[0].size(-2), 1))
-                    key_states = torch.cat(key_states, dim=1)
                     value_states = [past_key_values[layer_idx]["value_states"], value_states]
-                    value_states[-1] = value_states[-1].repeat((1, 1, value_states[0].size(-2), 1))
-                    value_states = torch.cat(
-                        value_states, dim=1
-                    )
             attention_interface = self.get_attention_interface()
             att_output = attention_interface(
                 attention_mask, batch_size, head_dim, query_states, key_states, value_states
@@ -378,7 +337,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
                         att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
                     
-                    out_emb = layer.self_attn.o_proj(att_output[:, start:end].repeat((1, 1, 4)))
+                    out_emb = layer.self_attn.o_proj(att_output[:, start:end])
 
                     # TODO: first dropout (by default 0.0)
 
@@ -437,10 +396,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
     def eager_attention_forward(
         self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
     ):
-        # num_att_heads = self.config.paligemma_config.text_config.num_attention_heads
-        # num_key_value_heads = self.config.paligemma_config.text_config.num_key_value_heads
-        num_att_heads = 4
-        num_key_value_heads = 4
+        num_att_heads = self.config.paligemma_config.text_config.num_attention_heads
+        num_key_value_heads = self.config.paligemma_config.text_config.num_key_value_heads
         num_key_value_groups = num_att_heads // num_key_value_heads
 
         # query_states: batch_size, sequence_length, num_att_head, head_dim
