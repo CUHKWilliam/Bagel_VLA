@@ -477,7 +477,6 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.remove_pi0 = config.remove_pi0 if config.remove_pi0 is not None else False
         self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
@@ -485,8 +484,7 @@ class PI0Policy(PreTrainedPolicy):
         self.unnormalize_outputs = Unnormalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
-        if not self.remove_pi0:
-            self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
         self.reset()
 
@@ -530,11 +528,8 @@ class PI0Policy(PreTrainedPolicy):
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            if not self.remove_pi0:
-                images, img_masks = self.prepare_images(batch)
-                lang_tokens, lang_masks = self.prepare_language(batch)
-            else:
-                images, img_masks, lang_tokens, lang_masks = None, None, None, None
+            images, img_masks = self.prepare_images(batch)
+            lang_tokens, lang_masks = self.prepare_language(batch)
             state = self.prepare_state(batch)
 
             actions, predict_image = self.model.sample_actions(
@@ -568,11 +563,8 @@ class PI0Policy(PreTrainedPolicy):
         batch = self.normalize_targets(batch)
         state = self.prepare_state(batch)
 
-        if not self.remove_pi0:
-            images, img_masks = self.prepare_images(batch)
-            lang_tokens, lang_masks = self.prepare_language(batch)
-        else:
-            images, img_masks, lang_tokens, lang_masks = None, None, None, None
+        images, img_masks = self.prepare_images(batch)
+        lang_tokens, lang_masks = self.prepare_language(batch)
 
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
@@ -729,12 +721,10 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         self.config = config
         
-        self.merge_bagel = config.merge_bagel if config.merge_bagel is not None else False
-        self.pi0_keep_ratio = config.pi0_keep_ratio if config.pi0_keep_ratio is not None else False
-        self.remove_pi0 = config.remove_pi0 if config.remove_pi0 is not None else False
+        self.merge_bagel = True
+        self.remove_pi0 = False
 
         if self.merge_bagel:
-            assert self.pi0_keep_ratio is not None
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             llm_config.layer_module = model_args.layer_module
             llm_config.qk_norm = model_args.llm_qk_norm
@@ -875,31 +865,27 @@ class PI0FlowMatching(nn.Module):
         time_beta = sample_beta(1.5, 1.0, bsize, device)
         time = time_beta * 0.999 + 0.001
         return time.to(dtype=torch.float32, device=device)
-
+    
+    def embed_prefix_bagel(self, batch, unnormalize_outputs):
+        datas = self.dataset(unnormalize_outputs(batch))
+        data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        data_batch = autocast(data_batch, torch.float32, self.dtype)
+        if training_args.visual_gen:
+            with torch.no_grad():
+                data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+        if "packed_action_tokens" in data_batch.keys():
+            with torch.no_grad():
+                data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
+        return data_batch
+    
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks, batch=None, unnormalize_outputs=None,
+        self, images, img_masks, lang_tokens, lang_masks
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
         """
-        self.dtype = self.state_proj.weight.dtype
         self.paligemma_with_expert = self.paligemma_with_expert.to(self.dtype)
 
-        if self.merge_bagel and batch is not None:
-            datas = self.dataset(unnormalize_outputs(batch))
-            data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
-            data_batch = autocast(data_batch, torch.float32, self.dtype)
-            if training_args.visual_gen:
-               with torch.no_grad():
-                    data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
-            if "packed_action_tokens" in data_batch.keys():
-                with torch.no_grad():
-                    data_batch['packed_action_tokens'] = torch.tensor(data_batch['packed_action_tokens']).to(f"cuda:{torch.cuda.current_device()}")
-        else:
-            data_batch = None
-
-        if self.remove_pi0:
-            return data_batch, None, None, None
         # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
         embs = []
         pad_masks = []
@@ -942,7 +928,7 @@ class PI0FlowMatching(nn.Module):
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-        return data_batch, embs, pad_masks, att_masks
+        return embs, pad_masks, att_masks
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -1010,60 +996,40 @@ class PI0FlowMatching(nn.Module):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-    
-        data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs
-        )
+        
+        self.dtype = self.state_proj.weight.dtype
         state = state.to(self.dtype)
         x_t = x_t.to(self.dtype)
         time = time.to(self.dtype)
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
-        if self.merge_bagel:
-            past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
-            if self.bagel_model.config.visual_gen:
-                visual_gen_complete = np.random.rand() < 0.5
-            ret = self.bagel_model(**data_batch, past_key_values=past_key_values, visual_gen_complete=visual_gen_complete)
-            sample_lens = data_batch['sample_lens'][:-1]
-            max_sample_lens = max(sample_lens)
-            bagel_pad_masks = []
-            bagel_att_masks = []
-            for batch_id in range(len(sample_lens)):
-                bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
-                bagel_pad_mask[sample_lens[batch_id]:] = 0
-                bagel_pad_masks.append(bagel_pad_mask)
-                bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
-                bagel_att_masks.append(bagel_att_mask)
-            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
-            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
 
-            if not self.remove_pi0:
-                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda())< self.pi0_keep_ratio, prefix_pad_masks)
-                position_ids =  torch.cumsum(torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
-                pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks, suffix_pad_masks], dim=1)
-                att_masks = torch.cat([ bagel_att_masks, prefix_att_masks, suffix_att_masks], dim=1)
-            else:
-                position_ids = torch.cumsum(torch.cat([bagel_pad_masks, suffix_pad_masks], dim=1), dim=1) - 1
-                pad_masks = torch.cat([bagel_pad_masks, suffix_pad_masks], dim=1)
-                att_masks = torch.cat([bagel_att_masks, suffix_att_masks], dim=1)
-        else: 
-            pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-            att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-            position_ids =  torch.cumsum(pad_masks, dim=1) - 1
+        past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+        visual_gen_complete = np.random.rand() < 0.5
+
+        data_batch = self.embed_prefix_bagel(batch, unnormalize_outputs)
+        ret = self.bagel_model(**data_batch, past_key_values=past_key_values, visual_gen_complete=visual_gen_complete)
+        
+        ## add latent noise to the next image
+        packed_latent_clean = self.vae_model.encode((batch['next.images.image'].to(self.dtype) - 0.5) * 2)
+        noise = torch.randn_like(packed_latent_clean)
+        packed_timesteps = np.random.randn()
+        packed_timesteps = torch.sigmoid(torch.tensor(packed_timesteps).float().cuda())
+        packed_timesteps *= 0.2
+        packed_latent = (1 - packed_timesteps) * packed_latent_clean + packed_timesteps * noise
+        next_image = self.vae_model.decode(packed_latent)
+        next_image = F.interpolate(next_image, images[-1].size()[-2:])
+        images.append(next_image)
+        img_masks.append(torch.tensor([1]).bool().cuda())
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
+      
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        position_ids =  torch.cumsum(pad_masks, dim=1) - 1
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         
-
-        if self.merge_bagel:
-            bagel_kv_cache = ret['past_key_values']
-            bagel_sample_lens = data_batch['sample_lens']
-        else:
-            bagel_kv_cache = None
-            bagel_sample_lens = None
-        if torch.cuda.current_device() == 0:
-            import ipdb;ipdb.set_trace()
-        else:
-            while True: pass
-
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks.bool(),
             position_ids=position_ids,
@@ -1071,8 +1037,8 @@ class PI0FlowMatching(nn.Module):
             inputs_embeds=[prefix_embs, suffix_embs],
             use_cache=False,
             fill_kv_cache=False,
-            bagel_kv_cache=bagel_kv_cache,
-            bagel_sample_lens=bagel_sample_lens,
+            bagel_kv_cache=None,
+            bagel_sample_lens=None,
         )
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         # Original openpi code, upcast attention output
@@ -1111,15 +1077,14 @@ class PI0FlowMatching(nn.Module):
             if self.bagel_model.config.visual_gen:
                 if not visual_gen_complete:
                     action_losses = action_losses.detach()
-            loss_dict['action_mse'] = action_losses
+        loss_dict['action_mse'] = action_losses
         return loss_dict, loss
 
     def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, batch=None, unnormalize_outputs=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
-        self.dtype = self.state_proj.weight.dtype
         device = torch.cuda.current_device()
         # '''
-        if self.merge_bagel:
+        if True:
             new_token_ids = self.new_token_ids
             if isinstance(new_token_ids, dict):
                 for k, v in new_token_ids.items():
@@ -1195,7 +1160,7 @@ class PI0FlowMatching(nn.Module):
             # output = tokenizer.decode(unpacked_latent[:,0])
             # output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
             
-            if training_args.visual_gen:
+            if True:
                 image_tensor = self.dataset.dataset.transform(Image.fromarray(observation_image))
                 resolution = tuple(self.dataset.dataset.transform(Image.fromarray(observation_image)).shape)[1:]
                 generation_input, newlens, new_rope = self.bagel_model.prepare_vae_latent(
@@ -1242,52 +1207,16 @@ class PI0FlowMatching(nn.Module):
                     latent = latent.reshape(1, resolution[0]//16, resolution[1]//16, 2, 2, 16)
                     latent = torch.einsum("nhwpqc->nchpwq", latent)
                     latent = latent.reshape(1, 16, resolution[0]//8, resolution[1]//8)
-                    image = self.vae_model.decode(latent.to(device))
-                    tmpimage = ((image * 0.5 + 0.5).clamp(0, 1)[0].permute(1, 2, 0) * 255).to(torch.uint8).cpu().numpy()
+                    next_image = self.vae_model.decode(latent.to(device))
+                    tmpimage = ((next_image * 0.5 + 0.5).clamp(0, 1)[0].permute(1, 2, 0) * 255).to(torch.uint8).cpu().numpy()
                     tmpimage = Image.fromarray(tmpimage)
                     image_list.append(tmpimage)
                 predict_images = image_list
                 predict_images[0].save('./debug4.png')
                 # import ipdb;ipdb.set_trace()
-            else:
-                predict_images = None
             past_key_values.key_cache = past_key_values.key_unnorm_cache
             bagel_kv_cache = past_key_values
             bagel_sample_lens = [newlens[-1], -1]
-        else:
-            bagel_kv_cache = None
-            bagel_sample_lens = None
-            predict_images = None
-        # '''
-
-        #################
-        '''
-        if self.merge_bagel:
-            self.bagel_model.train()
-            data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks, batch, unnormalize_outputs )
-            past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
-            ret = self.bagel_model(**data_batch, past_key_values=past_key_values)
-            sample_lens = data_batch['sample_lens'][:-1]
-            max_sample_lens = max(sample_lens)
-            bagel_pad_masks = []
-            bagel_att_masks = []
-            for batch_id in range(len(sample_lens)):
-                bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
-                bagel_pad_mask[sample_lens[batch_id]:] = 0
-                bagel_pad_masks.append(bagel_pad_mask)
-                bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
-                bagel_att_masks.append(bagel_att_mask)
-            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0).bool()
-            bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            bagel_kv_cache = ret['past_key_values']
-            bagel_sample_lens = data_batch['sample_lens']
-        else:
-            bagel_kv_cache = None
-            bagel_sample_lens = None
-            predict_images = None 
-        '''
-        ################
-
 
         bsize = 1
         device = "cuda"
@@ -1295,39 +1224,14 @@ class PI0FlowMatching(nn.Module):
         if noise is None:
             actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
+        next_image = next_image = F.interpolate(next_image, images[-1].size()[-2:])
+        images.append(next_image)
         data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks,
         )
 
-        if self.merge_bagel:
-            # '''
-            bagel_pad_masks = []
-            bagel_att_masks = []
-            batch_id = 0
-            max_sample_lens = newlens[-1]
-            bagel_pad_mask = torch.from_numpy(np.ones(max_sample_lens)).long().cuda()
-            bagel_pad_masks.append(bagel_pad_mask)
-            bagel_att_mask = torch.zeros((max_sample_lens,)).long().cuda()
-            bagel_att_masks.append(bagel_att_mask)
-            bagel_pad_masks = torch.stack(bagel_pad_masks, dim=0)
-            bagel_att_masks = bagel_att_masks = torch.stack(bagel_att_masks, dim=0)
-            # '''
-            if not self.remove_pi0:
-               #  bagel_pad_masks = torch.logical_and(torch.rand_like(bagel_pad_masks.float().cuda()) < (1 - self.pi0_keep_ratio), bagel_pad_masks) ##TODO:
-                prefix_pad_masks = torch.logical_and(torch.rand_like(prefix_pad_masks.float().cuda()) < self.pi0_keep_ratio, prefix_pad_masks) 
-
-                prefix_position_ids = torch.cumsum(torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1), dim=1) - 1
-                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-                prefix_pad_masks = torch.cat([bagel_pad_masks, prefix_pad_masks], dim=1)
-                prefix_att_masks = torch.cat([bagel_att_masks, prefix_att_masks], dim=1)
-            else:
-                prefix_position_ids = torch.cumsum(bagel_pad_masks, dim=1) - 1
-                prefix_pad_masks = bagel_pad_masks
-                prefix_att_masks = bagel_att_masks
-                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        else:
-            prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-            prefix_offsets = None
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_offsets = None
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
          
         # Compute image and language key value cache
@@ -1337,8 +1241,8 @@ class PI0FlowMatching(nn.Module):
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
             use_cache=self.config.use_cache,
-            bagel_kv_cache=bagel_kv_cache,
-            bagel_sample_lens=bagel_sample_lens,
+            bagel_kv_cache=None,
+            bagel_sample_lens=None,
             fill_kv_cache=True,
         )
 

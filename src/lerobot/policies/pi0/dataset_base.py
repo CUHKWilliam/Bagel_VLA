@@ -449,15 +449,15 @@ class PackedDataset:
         dataset_args = {
             "image_transform_args": {
                 "image_stride": 16,
-                "max_image_size": 1024,
-                "min_image_size": 512
+                "max_image_size": 256,
+                "min_image_size": 256
                 # "max_image_size": 128,
                 # "min_image_size": 64
             },
             "vit_image_transform_args":{
                 "image_stride": 14,
-                "max_image_size": 518,
-                "min_image_size": 224
+                "max_image_size": 256,
+                "min_image_size": 256
                 # "max_image_size": 128,
                 # "min_image_size": 64
             },
