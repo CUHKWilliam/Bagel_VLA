@@ -1192,11 +1192,7 @@ class Bagel(PreTrainedModel):
 
             extra_inputs = {}
             if self.use_moe:
-                extra_inputs = {
-                "mode": "action",
-                "packed_act_token_indexes": packed_act_token_indexes,
-                "packed_text_indexes": packed_text_indexes,
-            }
+                extra_inputs = {"mode": "und"}
 
             output = self.language_model.forward_inference(
                 packed_query_sequence=packed_text_embedding,
@@ -1230,7 +1226,6 @@ class Bagel(PreTrainedModel):
             key_values_lens = key_values_lens + 1
             packed_query_position_ids = packed_query_position_ids + 1
             step += 1
-        import ipdb;ipdb.set_trace()
         return torch.stack([i.cuda for i in generated_sequence], dim=0)
     
     # for evaluation

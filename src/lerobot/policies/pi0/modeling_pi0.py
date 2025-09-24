@@ -585,9 +585,11 @@ class PI0Policy(PreTrainedPolicy):
         return self._action_queue.popleft(), predict_image[0]
     
     def normalize_actions(self, actions: torch.Tensor) -> torch.Tensor:
-        mins = actions.amin(dim=(1, 2), keepdim=True)  # [0]
-        maxs = actions.amax(dim=(1, 2), keepdim=True)  # [0]
-        return 2 * (actions - mins) / (maxs - mins + 1e-8) - 1
+        # mins = actions.amin(dim=(1, 2), keepdim=True)  # [0]
+        # maxs = actions.amax(dim=(1, 2), keepdim=True)  # [0]
+        # return 2 * (actions - mins) / (maxs - mins + 1e-8) - 1
+        # actions = self.normalize_targets({'action': actions})['action']
+        return actions
 
     
     def fast_tokenizer_wrapper(self, actions_norm):
@@ -596,8 +598,7 @@ class PI0Policy(PreTrainedPolicy):
         conversion to PyTorch tensors, and returns a dictionary without padding.
         """
         batch_tokens = self.fast_tokenizer(actions_norm)
-        fast_out = self.model.tokenizer.pad({"input_ids": batch_tokens}, return_tensors="pt")
-        return fast_out
+        return batch_tokens
 
     def _act_tokens_to_bagel_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         out = self.model.tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
@@ -617,17 +618,17 @@ class PI0Policy(PreTrainedPolicy):
         """                       
         cleaned_tokens = tokens
         action_mask = cleaned_tokens == self.pad_token_id
-        cleaned_tokens[action_mask] = self.model.tokenizer.vocab_size - 1 - self.fast_skip_tokens
+        cleaned_tokens = cleaned_tokens[torch.logical_not(action_mask)]
         action_tokens = self._act_tokens_to_bagel_tokens(cleaned_tokens)
         decoded_actions = torch.tensor(
                 self.decode_actions_with_fast(
                     action_tokens.unsqueeze(0).tolist(),
                     time_horizon=action_horizon,
-                    action_dim=action_dim,
+                    action_dim=self.config.max_action_dim,
                     relaxed_decoding=True,
                 ),
-            ).cuda()
-        decoded_actions[action_mask[None, :]] *= 0
+        ).cuda()[:, :, :action_dim]
+        # deocded_actions = self.unnormalize_inputs({'action': decoded_actions})['action']
         return decoded_actions
 
     def decode_actions_with_fast(
@@ -641,20 +642,11 @@ class PI0Policy(PreTrainedPolicy):
         """
         Adapt original decoding in FAST to always return actions instead of zeros.
         """
-        self.time_horizon = (
-            time_horizon or self.fast_tokenizer.time_horizon or self.fast_tokenizer.called_time_horizon
-        )
-        self.action_dim = (
-            action_dim or self.fast_tokenizer.action_dim or self.fast_tokenizer.called_action_dim
-        )
 
         # Cache the time horizon and action dimension for the next call
-        self.called_time_horizon = self.time_horizon
-        self.called_action_dim = self.action_dim
+        self.called_time_horizon = time_horizon
+        self.called_action_dim = action_dim
 
-        assert self.time_horizon is not None and self.action_dim is not None, (
-            "Tokenizer not initialized, call encode() once or pass in time_horizon and action_dim."
-        )
 
         decoded_actions = []
         for token in tokens:
@@ -663,7 +655,7 @@ class PI0Policy(PreTrainedPolicy):
                 decoded_dct_coeff = np.array(list(map(ord, decoded_tokens))) + self.fast_tokenizer.min_token
                 if relaxed_decoding:
                     # Expected sequence length
-                    expected_seq_len = self.time_horizon * self.action_dim
+                    expected_seq_len = time_horizon * action_dim
                     diff = expected_seq_len - decoded_dct_coeff.shape[0]
                     # Apply truncation if too long
                     if diff < 0:
@@ -673,17 +665,16 @@ class PI0Policy(PreTrainedPolicy):
                         decoded_dct_coeff = np.pad(
                             decoded_dct_coeff, (0, diff), mode="constant", constant_values=0
                         )
-
-                decoded_dct_coeff = decoded_dct_coeff.reshape(-1, self.action_dim)
+                decoded_dct_coeff = decoded_dct_coeff.reshape(-1, action_dim)
                 assert decoded_dct_coeff.shape == (
-                    self.time_horizon,
-                    self.action_dim,                                                                                                                                                                                                                                                            ), (
-                    f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({self.time_horizon}, {self.action_dim})"
+                    time_horizon,
+                    action_dim,                                                                                                                                                                                                                                                            ), (
+                    f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({time_horizon}, {action_dim})"
                 )
             except Exception as e:
                 print(f"Error decoding tokens: {e}")
                 print(f"Tokens: {token}")
-                decoded_dct_coeff = np.zeros((self.time_horizon, self.action_dim))
+                decoded_dct_coeff = np.zeros((time_horizon,action_dim))
             decoded_actions.append(idct(decoded_dct_coeff / self.fast_tokenizer.scale, axis=0, norm="ortho"))
         return np.stack(decoded_actions)
 
@@ -695,11 +686,9 @@ class PI0Policy(PreTrainedPolicy):
         fast_out = self.fast_tokenizer_wrapper(
             actions_pad.cpu(),
         )
-        act_ids = fast_out["input_ids"]
-        act_mask = fast_out["attention_mask"].cuda()
-        act_ids2 = self._act_tokens_to_bagel_tokens(act_ids).cuda()
-        act_ids2[act_mask == 0] = self.pad_token_id
-        return act_ids2
+        act_ids = [torch.tensor(a_fast_out) for a_fast_out in fast_out]
+        act_ids = [self._act_tokens_to_bagel_tokens(a_act_ids).cuda() for a_act_ids in act_ids]
+        return act_ids
 
 
     def prepare_inputs(self, batch):
@@ -1173,12 +1162,12 @@ class PI0FlowMatching(nn.Module):
             temperature = 0.2
             output = self.bagel_model.generate_text(
                 past_key_values=past_key_values,
-                max_length=self.bagel_model.config.chunk_size + 1,
+                max_length=100,
                 do_sample=do_sample,
                 temperature=temperature,
                 end_token_id=new_token_ids['eoa_token_id'],
                 **generation_input,
             )
-            action_tokens = output[1:, 0]
+            action_tokens = output[1:85, 0]
             return action_tokens, predict_images
         

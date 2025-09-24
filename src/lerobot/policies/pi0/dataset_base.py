@@ -236,8 +236,7 @@ class InterleavedBaseIterableDataset:
                 "type": "action",
                 "enable_cfg": 0,
                 "loss": 1,
-                "special_token_loss": 0,
-                "special_token_label": None,
+                "special_token_loss": 1,
             }
         )
         return data
@@ -388,7 +387,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     need_vit=True, 
                 )
             if self.action_gen:
-                actions = sample[ACTION][0]
+                actions = sample[ACTION][batch_idx]
                 data = self._add_action(
                     data,
                     actions,
@@ -685,7 +684,7 @@ class PackedDataset:
                 if item['special_token_loss'] == 1:
                     sequence_status['ce_loss_indexes'].append(curr)
                     sequence_status['ce_loss_weights'].append(1.0)
-                    sequence_status['packed_label_ids'].append(item['special_token_label'])
+                    sequence_status['packed_label_ids'].append(self.eoa_token_id)
                 curr += 1
                 curr_split_len += 1
 
