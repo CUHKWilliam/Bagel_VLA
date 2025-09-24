@@ -513,8 +513,6 @@ class PackedDataset:
             packed_vit_token_indexes    = list(), 
             packed_act_token_indexes = list(),
             packed_act_tokens        = list(),
-            act_ce_loss_indexes         = list(),
-            act_ce_loss_weights         = list(),
         )
         return sequence_status
 
@@ -569,8 +567,6 @@ class PackedDataset:
         if len(sequence_status['packed_act_tokens']) > 0:
             data['packed_act_tokens'] = torch.cat(sequence_status['packed_act_tokens'], dim=0)
             data['packed_act_token_indexes'] = torch.tensor(sequence_status['packed_act_token_indexes'])
-            data['act_ce_loss_indexes'] = torch.tensor(sequence_status['act_ce_loss_indexes'])
-            data['act_ce_loss_weights'] = torch.tensor(sequence_status['act_ce_loss_weights'])
         return data
 
     def __call__(self, sample):
@@ -671,28 +667,22 @@ class PackedDataset:
                 curr_rope_id += 1
 
             elif item['type'] == 'action':
-                action_tokens = sample['action'].pop(0)
-                # add a <|startofaction|> token
-                sequence_status['packed_text_ids'].append(self.boa_token_id)
-                sequence_status['packed_text_indexes'].append(curr)
-                curr += 1
-                curr_split_len += 1
+                text_ids = sample['action'].pop(0).tolist()
+                shifted_text_ids = [self.boa_token_id] + text_ids
+                sequence_status['packed_text_ids'].extend(shifted_text_ids)
+                sequence_status['packed_text_indexes'].extend(range(curr, curr + len(shifted_text_ids)))
+                if item['loss'] == 1:
+                    sequence_status['ce_loss_indexes'].extend(range(curr, curr + len(shifted_text_ids)))
+                    sequence_status['ce_loss_weights'].extend(
+                        [len2weight(len(shifted_text_ids))] * len(shifted_text_ids)
+                    )
+                    sequence_status['packed_label_ids'].extend(text_ids + [self.eoa_token_id])
+                curr += len(shifted_text_ids)
+                curr_split_len += len(shifted_text_ids)
 
-                # preprocess image
-                num_act_tokens = action_tokens.shape[0]
-                sequence_status['packed_act_token_indexes'].extend(range(curr, curr + num_act_tokens))
-                sequence_status['packed_act_tokens'].append(action_tokens)
-                sequence_status['act_ce_loss_indexes'].extend(range(curr, curr + num_act_tokens))
-                sequence_status['act_ce_loss_weights'].extend(
-                    [len2weight(num_act_tokens)] * num_act_tokens
-                )
-                curr += num_act_tokens
-                curr_split_len += num_act_tokens
-
-                # add a <|endofaction|> token
                 sequence_status['packed_text_ids'].append(self.eoa_token_id)
                 sequence_status['packed_text_indexes'].append(curr)
-                if item['special_token_loss'] == 1: # <|endofactino|> may have loss
+                if item['special_token_loss'] == 1:
                     sequence_status['ce_loss_indexes'].append(curr)
                     sequence_status['ce_loss_weights'].append(1.0)
                     sequence_status['packed_label_ids'].append(item['special_token_label'])
@@ -938,8 +928,6 @@ class SimpleCustomBatch:
         if hasattr(self, 'packed_act_tokens'):
             data['packed_act_tokens'] = self.packed_act_tokens
             data['packed_act_token_indexes'] = self.packed_act_token_indexes
-            data['act_ce_loss_indexes'] = self.act_ce_loss_indexes
-            data['act_ce_loss_weights'] = self.act_ce_loss_weights
         return data
 
 

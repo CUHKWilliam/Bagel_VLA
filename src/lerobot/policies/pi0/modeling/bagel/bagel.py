@@ -239,10 +239,6 @@ class Bagel(PreTrainedModel):
         packed_vae_token_indexes: Optional[torch.LongTensor] = None,
         packed_timesteps: Optional[torch.LongTensor] = None,
         mse_loss_indexes: Optional[torch.BoolTensor] = None,
-        # for action generation
-        packed_act_tokens: Optional[torch.Tensor] = None,
-        packed_act_token_indexes: Optional[torch.LongTensor] = None,
-        act_ce_loss_indexes: Optional[torch.BoolTensor] = None,
         past_key_values = None,
         visual_gen_complete = False,
         **kwargs,
@@ -322,10 +318,6 @@ class Bagel(PreTrainedModel):
             packed_latent = self.vae2llm(packed_latent) + packed_timestep_embeds + latent_token_pos_emb
             packed_sequence[packed_vae_token_indexes] = packed_latent
         
-        if self.config.action_gen:
-            packed_action_embedding = self.language_model.model.embed_tokens(packed_act_tokens)
-            packed_sequence[packed_act_token_indexes] = packed_action_embedding
-
         extra_inputs = {}
         if self.use_moe:
             packed_und_token_indexes = packed_text_indexes
@@ -334,7 +326,6 @@ class Bagel(PreTrainedModel):
             extra_inputs.update(
                 packed_und_token_indexes=packed_und_token_indexes,
                 packed_gen_token_indexes=packed_vae_token_indexes,
-                packed_act_token_indexes=packed_act_token_indexes,
             )
         last_hidden_state, past_key_values = self.language_model(
             packed_sequence=packed_sequence,
@@ -355,11 +346,7 @@ class Bagel(PreTrainedModel):
         if ce_loss_indexes is not None:
             packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
             ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
-        action_ce = None
-        if act_ce_loss_indexes is not None:
-            packed_act_ce_preds = self.language_model.lm_head(last_hidden_state[act_ce_loss_indexes])
-            action_ce = F.cross_entropy(packed_act_ce_preds, packed_act_tokens, reduction="none")
-        return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state, past_key_values=past_key_values, action_ce=action_ce)
+        return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state, past_key_values=past_key_values)
 
     def prepare_prompts(self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids):
         packed_text_ids = list()
@@ -1027,6 +1014,25 @@ class Bagel(PreTrainedModel):
 
         return generation_input
 
+    def prepare_action_start_tokens(self, curr_kvlens, curr_rope, new_token_ids):
+        packed_start_tokens, packed_key_value_indexes = list(), list()
+        packed_query_position_ids = list()
+
+        curr = 0
+        for curr_kvlen, curr_position_id in zip(curr_kvlens, curr_rope):
+            packed_key_value_indexes.extend(range(curr, curr + curr_kvlen))
+            packed_start_tokens.append(new_token_ids['boa_token_id'])
+            packed_query_position_ids.append(curr_position_id)
+            curr += curr_kvlen
+
+        generation_input = {
+            "packed_start_tokens": torch.tensor(packed_start_tokens, dtype=torch.long),
+            "packed_query_position_ids": torch.tensor(packed_query_position_ids, dtype=torch.long),
+            "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
+            "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
+        }
+
+        return generation_input 
     def prepare_action(self, curr_kvlens, curr_rope, new_token_ids):
         packed_text_ids, packed_text_indexes = list(), list()
         packed_act_position_ids, packed_act_token_indexes = list(), list()

@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 # import swanlab
 # swanlab.sync_wandb()
 
@@ -81,16 +82,13 @@ def update_policy(
     loss_value = accelerator.gather(loss.detach()).mean().item()
     mse = output_dict['mse']
     ce = output_dict['ce']
-    action_ce = output_dict['action_ce']
     mse_loss_value = accelerator.gather(mse.detach()).mean().item()
     ce_loss_value = accelerator.gather(ce.detach()).mean().item()
-    action_ce_loss_value = accelerator.gather(action_ce.detach()).mean().item()
 
     # grad_norm_value = accelerator.gather(grad_norm).mean().item()
 
     train_metrics.loss = loss.item()
     train_metrics.ce = ce.item()
-    train_metrics.action_ce = action_ce.item()
     train_metrics.mse = mse.item()
     # train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = policy.get_lr()[0]
@@ -277,7 +275,6 @@ def train(cfg: TrainPipelineConfig):
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "ce": AverageMeter("ce", ":.3f"),
-        "action_ce": AverageMeter("action_ce", ":.3f"),
         "mse": AverageMeter("mse", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
         "lr": AverageMeter("lr", ":0.1e"),

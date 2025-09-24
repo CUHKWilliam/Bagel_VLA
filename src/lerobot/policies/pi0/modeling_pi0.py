@@ -94,6 +94,7 @@ import cv2
 from PIL import Image
 from safetensors.torch import load_file
 import time as Time
+from scipy.fft import idct
 
 def autocast(data_batch, dtype1, dtype2):
     for key in data_batch.keys():
@@ -571,7 +572,6 @@ class PI0Policy(PreTrainedPolicy):
             actions, predict_image = self.model.sample_actions(
                 batch, self.dataset.dataset.vit_transform, self.dataset.dataset.transform, self.dataset.tokenizer
             )
-
             actions = self.extract_actions(actions, self.model.bagel_model.action_horizon, self.model.bagel_model.action_dim)
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
@@ -615,7 +615,9 @@ class PI0Policy(PreTrainedPolicy):
         Returns:
             torch.Tensor: The extracted actions as a tensor of shape (action_horizon, action_dim).
         """                       
-        cleaned_tokens = tokens[1:-1]
+        cleaned_tokens = tokens
+        action_mask = cleaned_tokens == self.pad_token_id
+        cleaned_tokens[action_mask] = self.model.tokenizer.vocab_size - 1 - self.fast_skip_tokens
         action_tokens = self._act_tokens_to_bagel_tokens(cleaned_tokens)
         decoded_actions = torch.tensor(
                 self.decode_actions_with_fast(
@@ -625,6 +627,7 @@ class PI0Policy(PreTrainedPolicy):
                     relaxed_decoding=True,
                 ),
             ).cuda()
+        decoded_actions[action_mask[None, :]] *= 0
         return decoded_actions
 
     def decode_actions_with_fast(
@@ -713,10 +716,6 @@ class PI0Policy(PreTrainedPolicy):
         if training_args.visual_gen:
             with torch.no_grad():
                 data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
-        if "packed_act_tokens" in data_batch.keys():
-            with torch.no_grad():
-                data_batch['packed_act_tokens'] = torch.tensor(data_batch['packed_act_tokens']).to(f"cuda:{torch.cuda.current_device()}")
-
         return data_batch
 
 
@@ -990,7 +989,7 @@ class PI0FlowMatching(nn.Module):
         loss = torch.tensor(0).float().cuda()
         if ret['ce'] is not None:
             ce = ret['ce']
-            total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes']), device=device)
+            total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes'])).cuda()
             if training_args.ce_loss_reweighting:
                 ce = ce * ce_loss_weights
                 total_ce_loss_weights = ce_loss_weights.sum()
@@ -1003,17 +1002,6 @@ class PI0FlowMatching(nn.Module):
             loss_dict["ce"] = torch.tensor(0).cuda().float()
             total_ce_tokens = torch.tensor(0).cuda().float()
         
-        if ret['action_ce'] is not None:
-            action_ce = ret['action_ce']
-            action_ce = action_ce.mean()
-            if self.bagel_model.config.visual_gen and not visual_gen_complete:
-                action_ce = action_ce.detach()
-            loss = loss + action_ce
-            loss_dict['action_ce'] = action_ce.detach()
-        else:
-            loss_dict["action_ce"] = torch.tensor(0).cuda().float()
-            total_act_ce_tokens = torch.tensor(0).cuda().float()
-
         if self.bagel_model.config.visual_gen:
             total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
             mse = ret['mse'].clone()
@@ -1177,15 +1165,20 @@ class PI0FlowMatching(nn.Module):
                 past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
             else:
                 predict_images = [None]
-            generation_input, newlens, new_rope = self.bagel_model.prepare_action(
-                curr_kvlens=newlens,
-                curr_rope=new_rope,
-                new_token_ids=new_token_ids,
-            )
+            generation_input = self.bagel_model.prepare_action_start_tokens(newlens, new_rope, new_token_ids)
             for k, v in generation_input.items():
                 if torch.is_tensor(v):
                     generation_input[k] = v.to(device)
-            output = self.bagel_model.generate_action(past_key_values=past_key_values, new_token_ids=new_token_ids, **generation_input)
-            action_tokens = output.argmax(1)
+            do_sample = False
+            temperature = 0.2
+            output = self.bagel_model.generate_text(
+                past_key_values=past_key_values,
+                max_length=self.bagel_model.config.chunk_size + 1,
+                do_sample=do_sample,
+                temperature=temperature,
+                end_token_id=new_token_ids['eoa_token_id'],
+                **generation_input,
+            )
+            action_tokens = output[1:, 0]
             return action_tokens, predict_images
         
