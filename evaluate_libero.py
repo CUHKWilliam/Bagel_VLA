@@ -179,7 +179,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
                     agentview_image = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
                     frames.append(agentview_image)
-
+                    cv2.imwrite('debug.png', agentview_image)
                     # Prepare observations dict
                     state = np.concatenate(
                         (

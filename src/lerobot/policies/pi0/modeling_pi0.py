@@ -617,8 +617,6 @@ class PI0Policy(PreTrainedPolicy):
             torch.Tensor: The extracted actions as a tensor of shape (action_horizon, action_dim).
         """                       
         cleaned_tokens = tokens
-        action_mask = cleaned_tokens == self.pad_token_id
-        cleaned_tokens = cleaned_tokens[torch.logical_not(action_mask)]
         action_tokens = self._act_tokens_to_bagel_tokens(cleaned_tokens)
         decoded_actions = torch.tensor(
                 self.decode_actions_with_fast(
@@ -1162,12 +1160,12 @@ class PI0FlowMatching(nn.Module):
             temperature = 0.2
             output = self.bagel_model.generate_text(
                 past_key_values=past_key_values,
-                max_length=100,
+                max_length=400,
                 do_sample=do_sample,
                 temperature=temperature,
                 end_token_id=new_token_ids['eoa_token_id'],
                 **generation_input,
             )
-            action_tokens = output[1:85, 0]
+            action_tokens = output[1:, 0]
             return action_tokens, predict_images
         
