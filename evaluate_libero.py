@@ -74,7 +74,7 @@ class Args:
     """Number of rollouts per task."""
 
     # --- Evaluation arguments ---
-    video_out_path: str = "./outputs/video/bagel-full-unified_libero"
+    video_out_path: str = "./outputs/video/bagel-full-gen-unified_libero"
     """Path to save videos."""
     device: str = "cuda"
     """Device to use for evaluation."""
@@ -210,9 +210,8 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     action = invert_gripper_action(action)
                     if SHOW_PREDICT_IMAGE:
                         if predict_image is not None:
-                            if predict_image is not None:
-                                last_predict_image = np.asarray(predict_image)
-                            frames[-1] = cv2.hconcat([frames[-1], last_predict_image])
+                            last_predict_image = np.asarray(predict_image)
+                        frames[-1] = cv2.hconcat([frames[-1], last_predict_image])
                     # Execute action in environment
                     obs, _, done, _ = env.step(action)
                     if done:

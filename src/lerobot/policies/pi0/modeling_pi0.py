@@ -1087,8 +1087,8 @@ class PI0FlowMatching(nn.Module):
             # output = output.split('<|im_end|>')[0].split('<|im_start|>')[1]
             
             if training_args.visual_gen:
-                image_tensor = self.dataset.dataset.transform(Image.fromarray(observation_image))
-                resolution = tuple(self.dataset.dataset.transform(Image.fromarray(observation_image)).shape)[1:]
+                image_tensor = vae_transform(Image.fromarray(observation_image))
+                resolution = tuple(vae_transform(Image.fromarray(observation_image)).shape)[1:]
                 generation_input, newlens, new_rope = self.bagel_model.prepare_vae_latent(
                     curr_kvlens=newlens,
                     curr_rope=new_rope, 
@@ -1133,7 +1133,7 @@ class PI0FlowMatching(nn.Module):
                     latent = latent.reshape(1, resolution[0]//16, resolution[1]//16, 2, 2, 16)
                     latent = torch.einsum("nhwpqc->nchpwq", latent)
                     latent = latent.reshape(1, 16, resolution[0]//8, resolution[1]//8)
-                    image = self.model.vae_model.decode(latent.to(device))
+                    image = self.vae_model.decode(latent.to(device))
                     tmpimage = ((image * 0.5 + 0.5).clamp(0, 1)[0].permute(1, 2, 0) * 255).to(torch.uint8).cpu().numpy()
                     tmpimage = Image.fromarray(tmpimage)
                     image_list.append(tmpimage)
@@ -1144,7 +1144,7 @@ class PI0FlowMatching(nn.Module):
                     curr_kvlens=newlens,
                     curr_rope=new_rope,
                     images=[predict_images[0]],
-                    transforms=self.dataset.dataset.vit_transform,
+                    transforms=vit_transform,
                     new_token_ids=new_token_ids,
                 )
                 for k, v in generation_input.items():
