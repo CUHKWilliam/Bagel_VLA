@@ -879,7 +879,7 @@ class PI0FlowMatching(nn.Module):
         return data_batch
     
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks
+        self, images, img_masks, 
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
@@ -912,18 +912,6 @@ class PI0FlowMatching(nn.Module):
             # Create attention masks so that image tokens attend to each other
             att_masks += [0] * num_img_embs
 
-        lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
-
-        # Normalize language embeddings
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-        
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
-
-        # full attention between image and language inputs
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
@@ -1006,6 +994,7 @@ class PI0FlowMatching(nn.Module):
         visual_gen_complete = np.random.rand() < 0.5
 
         data_batch = self.embed_prefix_bagel(batch, unnormalize_outputs)
+
         ret = self.bagel_model(**data_batch, past_key_values=past_key_values, visual_gen_complete=visual_gen_complete)
         
         ## add latent noise to the next image
@@ -1020,8 +1009,12 @@ class PI0FlowMatching(nn.Module):
         images.append(next_image)
         img_masks.append(torch.tensor([1]).bool().cuda())
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
+            images, img_masks, 
         )
+        if torch.cuda.current_device() == 0:
+            import ipdb;ipdb.set_trace()
+        else:
+            while True: pass
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
       
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
@@ -1083,6 +1076,7 @@ class PI0FlowMatching(nn.Module):
     def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, batch=None, unnormalize_outputs=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         device = torch.cuda.current_device()
+        self.dtype = self.state_proj.weight.dtype
         # '''
         if True:
             new_token_ids = self.new_token_ids
@@ -1213,21 +1207,17 @@ class PI0FlowMatching(nn.Module):
                     image_list.append(tmpimage)
                 predict_images = image_list
                 predict_images[0].save('./debug4.png')
-                # import ipdb;ipdb.set_trace()
-            past_key_values.key_cache = past_key_values.key_unnorm_cache
-            bagel_kv_cache = past_key_values
-            bagel_sample_lens = [newlens[-1], -1]
-
         bsize = 1
         device = "cuda"
 
         if noise is None:
             actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
-        next_image = next_image = F.interpolate(next_image, images[-1].size()[-2:])
+        next_image = F.interpolate(next_image, images[-1].size()[-2:])
         images.append(next_image)
-        data_batch, prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks,
+        img_masks.append(tensor([True]).bool().cuda())
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, 
         )
 
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
@@ -1258,8 +1248,8 @@ class PI0FlowMatching(nn.Module):
                 past_key_values,
                 x_t,
                 expanded_time,
-                bagel_kv_cache,
-                bagel_sample_lens,
+                None,
+                None,
                 prefix_offsets,
             )
 

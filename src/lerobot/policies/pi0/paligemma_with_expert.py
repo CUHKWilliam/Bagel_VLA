@@ -228,7 +228,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             return self.paligemma.model.get_image_features(image)
 
     def embed_language_tokens(self, tokens: torch.Tensor):
-        return self.paligemma.language_model.model.embed_tokens(tokens)
+        return self.paligemma.language_model.embed_tokens(tokens)
 
     # TODO: break down this huge forward into modules or functions
     def forward(
@@ -308,8 +308,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     # so we create an empty cache, with just one cuda malloc, and if (in autoregressive case) we reach
                     # the max len, then we (for instance) double the cache size. This implementation already exists
                     # in `transformers`. (molbap)
-                    key_states = [past_key_values[layer_idx]["key_states"], key_states]
-                    value_states = [past_key_values[layer_idx]["value_states"], value_states]
+                    key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
+                    value_states = torch.cat([past_key_values[layer_idx]["value_states"], value_states], dim=1)
             attention_interface = self.get_attention_interface()
             att_output = attention_interface(
                 attention_mask, batch_size, head_dim, query_states, key_states, value_states
