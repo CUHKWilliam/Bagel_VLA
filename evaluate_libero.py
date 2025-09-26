@@ -74,7 +74,7 @@ class Args:
     """Number of rollouts per task."""
 
     # --- Evaluation arguments ---
-    video_out_path: str = "./outputs/video/bagel-full_libero_train-bagel"
+    video_out_path: str = "./outputs/video/bagel-full-unified_libero"
     """Path to save videos."""
     device: str = "cuda"
     """Device to use for evaluation."""
@@ -231,7 +231,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
             suffix = "success" if done else "failure"
             task_segment = task_description.replace(" ", "_").replace("/", "_")
             video_path = (
-                pathlib.Path(args.video_out_path) / f"rollout_task_{task_id}_episode_{episode_idx}_{task_segment}_{suffix}_10-step.mp4"
+                pathlib.Path(args.video_out_path) / f"rollout_task_{task_id}_episode_{episode_idx}_{task_segment}_{suffix}.mp4"
             )
             fps = 30
             width, height, _ = frames[0].shape

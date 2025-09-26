@@ -219,7 +219,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -702,7 +702,7 @@ class PI0Policy(PreTrainedPolicy):
         data_batch = autocast(data_batch, torch.float32, self.dtype)
         if training_args.visual_gen:
             with torch.no_grad():
-                data_batch['padded_latent'] = self.vae_model.encode(data_batch.pop('padded_images'))
+                data_batch['padded_latent'] = self.model.vae_model.encode(data_batch.pop('padded_images'))
         return data_batch
 
 
@@ -976,6 +976,8 @@ class PI0FlowMatching(nn.Module):
         loss = torch.tensor(0).float().cuda()
         if ret['ce'] is not None:
             ce = ret['ce']
+            if self.bagel_model.config.visual_gen and not visual_gen_complete:
+                ce = ce.detach()
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes'])).cuda()
             if training_args.ce_loss_reweighting:
                 ce = ce * ce_loss_weights
@@ -1131,7 +1133,7 @@ class PI0FlowMatching(nn.Module):
                     latent = latent.reshape(1, resolution[0]//16, resolution[1]//16, 2, 2, 16)
                     latent = torch.einsum("nhwpqc->nchpwq", latent)
                     latent = latent.reshape(1, 16, resolution[0]//8, resolution[1]//8)
-                    image = self.vae_model.decode(latent.to(device))
+                    image = self.model.vae_model.decode(latent.to(device))
                     tmpimage = ((image * 0.5 + 0.5).clamp(0, 1)[0].permute(1, 2, 0) * 255).to(torch.uint8).cpu().numpy()
                     tmpimage = Image.fromarray(tmpimage)
                     image_list.append(tmpimage)
