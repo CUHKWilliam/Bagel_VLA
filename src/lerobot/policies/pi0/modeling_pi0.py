@@ -1011,10 +1011,6 @@ class PI0FlowMatching(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, 
         )
-        if torch.cuda.current_device() == 0:
-            import ipdb;ipdb.set_trace()
-        else:
-            while True: pass
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
       
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
@@ -1177,7 +1173,7 @@ class PI0FlowMatching(nn.Module):
                 for k, v in generation_input_cfg.items():
                     if torch.is_tensor(v):
                         generation_input_cfg[k] = v.to(device)
-                num_timesteps = 50 ## TODO: set timesteps here
+                num_timesteps = 10 ## TODO: set timesteps here
                 cfg_scale = 4
                 cfg_interval = [0., 1.]
                 timestep_shift = 3.0
@@ -1215,11 +1211,10 @@ class PI0FlowMatching(nn.Module):
             noise = self.sample_noise(actions_shape, device)
         next_image = F.interpolate(next_image, images[-1].size()[-2:])
         images.append(next_image)
-        img_masks.append(tensor([True]).bool().cuda())
+        img_masks.append(torch.tensor([True]).bool().cuda())
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, 
         )
-
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
         prefix_offsets = None
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
