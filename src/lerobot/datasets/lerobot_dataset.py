@@ -311,7 +311,7 @@ class LeRobotDatasetMetadata:
         obj.repo_id = repo_id
         obj.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
 
-        obj.root.mkdir(parents=True, exist_ok=False)
+        obj.root.mkdir(parents=True, exist_ok=True)
 
         # TODO(aliberts, rcadene): implement sanity check for features
         features = {**features, **DEFAULT_FEATURES}
@@ -862,7 +862,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
-
+        
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)

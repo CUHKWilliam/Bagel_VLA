@@ -37,7 +37,7 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
-
+    vqa_repo_id: str | None = None
 
 @dataclass
 class WandBConfig:

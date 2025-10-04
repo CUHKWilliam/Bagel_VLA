@@ -25,7 +25,13 @@ from lerobot.datasets.lerobot_dataset import (
     LeRobotDatasetMetadata,
     MultiLeRobotDataset,
 )
+from lerobot.common.datasets.utils import get_delta_indices
 from lerobot.datasets.transforms import ImageTransforms
+
+from lerobot.datasets.vqa_dataset import(
+    VQADataset,
+    MultiVQADataset,
+)
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -81,7 +87,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
-
+    if "," in cfg.dataset.repo_id:
+        cfg.dataset.repo_id = cfg.dataset.repo_id.split(",")
     if isinstance(cfg.dataset.repo_id, str):
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
@@ -96,23 +103,45 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             revision=cfg.dataset.revision,
             video_backend=cfg.dataset.video_backend,
         )
+        if cfg.dataset.use_imagenet_stats:
+            for key in dataset.meta.camera_keys:
+                for stats_type, stats in IMAGENET_STATS.items():
+                    dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
     else:
-        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
         dataset = MultiLeRobotDataset(
             cfg.dataset.repo_id,
             # TODO(aliberts): add proper support for multi dataset
             # delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
+            episodes=cfg.dataset.episodes
         )
-        logging.info(
-            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index, indent=2)}"
-        )
+        for a_dataset in dataset._datasets:
+            ds_meta = LeRobotDatasetMetadata(a_dataset.repo_id, root=a_dataset.root, revision=a_dataset.revision)
+            delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+            a_dataset.delta_timestamps = delta_timestamps
+            a_dataset.delta_indices = get_delta_indices(a_dataset.delta_timestamps, a_dataset.fps)
 
-    if cfg.dataset.use_imagenet_stats:
-        for key in dataset.meta.camera_keys:
-            for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        dataset.meta = copy.deepcopy(dataset._datasets[0].meta)
 
+        if cfg.dataset.use_imagenet_stats:
+            for a_dataset in dataset._datasets:
+                for key in dataset.meta.camera_keys:
+                    for stats_type, stats in IMAGENET_STATS.items():
+                        dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+    if cfg.dataset.vqa_repo_id is not None:
+        if "," in cfg.dataset.vqa_repo_id:
+            cfg.dataset.vqa_repo_id = cfg.dataset.vqa_repo_id.split(',')
+        if isinstance(cfg.dataset.vqa_repo_id, str):
+            vqa_dataset = VQADataset(
+                cfg.dataset.vqa_repo_id,
+                image_transforms=image_transforms,
+            )
+        else:
+            vqa_dataset = MultiVQADataset(
+                cfg.dataset.vqa_repo
+                image_transforms=image_transforms,
+            )
+        dataset = torch.utils.ConcatDataset([dataset, vqa_dataset])
+    
     return dataset
