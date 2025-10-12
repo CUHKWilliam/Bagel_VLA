@@ -25,7 +25,7 @@ from lerobot.datasets.lerobot_dataset import (
     LeRobotDatasetMetadata,
     MultiLeRobotDataset,
 )
-from lerobot.common.datasets.utils import get_delta_indices
+from lerobot.datasets.utils import get_delta_indices
 from lerobot.datasets.transforms import ImageTransforms
 
 from lerobot.datasets.vqa_dataset import(
@@ -139,7 +139,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             )
         else:
             vqa_dataset = MultiVQADataset(
-                cfg.dataset.vqa_repo
+                cfg.dataset.vqa_repo,
                 image_transforms=image_transforms,
             )
         dataset = torch.utils.ConcatDataset([dataset, vqa_dataset])
