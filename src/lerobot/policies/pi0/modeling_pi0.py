@@ -143,7 +143,7 @@ class DataArguments:
 @dataclass
 class ModelArguments:
     model_path: str = field(
-        default="./weight2/BAGEL-7B-MoT",
+        default="models/BAGEL-7B-MoT",
         metadata={"help": "Path of the pretrained BAGEL model."}
     )
     llm_path: str = field(
@@ -780,6 +780,19 @@ class PI0FlowMatching(nn.Module):
         
 
         if True:
+            if not os.path.exists(os.path.join(model_args.model_path, 'llm_config.json')):
+                from huggingface_hub import snapshot_download
+                save_dir =model_args.model_path
+                repo_id = "ByteDance-Seed/BAGEL-7B-MoT"
+                cache_dir = save_dir
+                snapshot_download(cache_dir=cache_dir,
+                  local_dir=save_dir,
+                  repo_id=repo_id,
+                  local_dir_use_symlinks=False,
+                  resume_download=True,
+                  allow_patterns=["*.json", "*.safetensors", "*.bin", "*.py", "*.md", "*.txt"],
+                )
+
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             llm_config.layer_module = model_args.layer_module
             llm_config.qk_norm = model_args.llm_qk_norm
