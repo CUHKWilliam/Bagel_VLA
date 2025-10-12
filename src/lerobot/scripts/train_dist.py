@@ -81,9 +81,15 @@ def update_policy(
     
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
-    mse = output_dict['mse']
+    if "mse" in output_dict.keys():
+        mse = output_dict['mse']
+    else:
+        mse = torch.tensor(0).float().cuda()
     action_mse = output_dict['action_mse']
-    ce = output_dict['ce']
+    if "ce" in output_dict.keys():
+        ce = output_dict['ce']
+    else:
+        ce = torch.tensor(0.).float().cuda()
     mse_loss_value = accelerator.gather(mse.detach()).mean().item()
     action_mse_loss_value = accelerator.gather(action_mse.detach()).mean().item()
     ce_loss_value = accelerator.gather(ce.detach()).mean().item()

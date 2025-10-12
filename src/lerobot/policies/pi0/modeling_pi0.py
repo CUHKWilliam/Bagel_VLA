@@ -1059,10 +1059,6 @@ class PI0FlowMatching(nn.Module):
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
-        if torch.cuda.current_device() == 0:
-            import ipdb;ipdb.set_trace()
-        else:
-            while True: pass
 
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks.bool(),
@@ -1111,7 +1107,7 @@ class PI0FlowMatching(nn.Module):
             if self.bagel_model.config.visual_gen:
                 if not visual_gen_complete:
                     action_losses = action_losses.detach()
-            loss_dict['action_mse'] = action_losses
+        loss_dict['action_mse'] = action_losses
         return loss_dict, loss
 
     def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, batch=None, unnormalize_outputs=None) -> Tensor:
@@ -1250,14 +1246,14 @@ class PI0FlowMatching(nn.Module):
                 predict_images[0].save('./debug4.png')
                 # import ipdb;ipdb.set_trace()
             else:
-                predict_images = None
+                predict_images = [None]
             past_key_values.key_cache = past_key_values.key_unnorm_cache
             bagel_kv_cache = past_key_values
             bagel_sample_lens = [newlens[-1], -1]
         else:
             bagel_kv_cache = None
             bagel_sample_lens = None
-            predict_images = None
+            predict_images = [None]
         # '''
 
         #################

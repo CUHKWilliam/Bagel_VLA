@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python3 evaluate_libero_smolvla.py --policy.path="./outputs/train/smolvla_libero_scratch/checkpoints/last/pretrained_model"  --config_path="./outputs/train/smolvla_libero_scratch/checkpoints/last/pretrained_model/train_config.json" --dataset.repo_id=aopolin-lv/libero_spatial_no_noops_lerobot_v21 

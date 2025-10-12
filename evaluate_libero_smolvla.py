@@ -89,14 +89,14 @@ args = Args()
 
 @parser.wrap()
 def eval_libero(cfg: TrainPipelineConfig) -> None:
-    cfg.type = "pi0"
+    cfg.type = "smolvla"
     cfg.resume = True
     cfg.validate()
     # Set random seed
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
-    policy = PI0Policy.from_pretrained(checkpoint_path / "pretrained_model")
+    policy = SmolVLAPolicy.from_pretrained(checkpoint_path / "pretrained_model")
     policy.to('cuda:0')
     policy.eval()
 
@@ -203,7 +203,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     # Query model to get action
                     ts = time.time()
                     with torch.inference_mode():
-                        action_tensor, predict_image = policy.select_action(observation)
+                        action_tensor = policy.select_action(observation)
                     action = action_tensor.cpu().numpy()[0]
                     # action[-1] = 1 - action[-1]
                     action = normalize_gripper_action(action, binarize=False)

@@ -358,6 +358,7 @@ class Bagel(PreTrainedModel):
         if ce_loss_indexes is not None:
             packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
             ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
+        
         return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state, past_key_values=past_key_values)
 
     def prepare_prompts(self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids):
