@@ -32,6 +32,10 @@ from lerobot.datasets.vqa_dataset import(
     VQADataset,
     MultiVQADataset,
 )
+from lerobot.datasets.video_dataset import (
+    VideoDataset,
+    MultiVideoDataset,
+)
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -147,6 +151,21 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 transform=image_transforms,
             )
         all_datasets.append(dataset)
+    if cfg.dataset.video_repo_id is not None:
+        if "," in cfg.dataset.video_repo_id:
+            cfg.dataset.video_repo_id = cfg.dataset.video_repo_id.split(',')
+        if isinstance(cfg.dataset.video_repo_id, str):
+            dataset = VideoDataset(
+                cfg.dataset.video_repo_id,
+                transform=image_transforms,
+            )
+        else:
+            dataset = MultiVideoDataset(
+                cfg.dataset.video_repo,
+                transform=image_transforms,
+            )
+        all_datasets.append(dataset)
+
     num_frames = 0
     num_episodes = 0
     for ds in all_datasets:

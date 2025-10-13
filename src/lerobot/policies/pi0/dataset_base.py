@@ -361,7 +361,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                         need_vit=True,
                     )
             instruction = sample['task'][batch_idx]
-            if '"role"' not in instruction:
+            if "action" in sample.keys():
                 instruction = "user:\nTask:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
                 data = self._add_text(data, instruction, need_loss=False)
             else:
