@@ -87,7 +87,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
-    import ipdb;ipdb.set_trace()
     all_datasets = []
     if cfg.dataset.repo_id is not None:
         if "," in cfg.dataset.repo_id:

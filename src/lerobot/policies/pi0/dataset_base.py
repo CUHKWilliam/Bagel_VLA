@@ -349,7 +349,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         for batch_idx in range(batch_size):
             # observation_images = []
             data = self._init_data()
-
+            
             for key in sorted(sample.keys(), reverse=True):
                 if "images." in key and "observation" in key:
                     # observation_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
@@ -360,32 +360,37 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                         need_vae=self.visual_gen,
                         need_vit=True,
                     )
-            # observation_image = cv2.hconcat(observation_images)
-            # data = self._init_data()
-            instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
-            # data = self._add_image(
-            #     data, 
-            #     pil_img2rgb(Image.fromarray(observation_image)),
-            #     need_loss=False, 
-            #     need_vae=True, 
-            #     need_vit=True, 
-            # )
-            data = self._add_text(data, instruction, need_loss=False)
+            instruction = sample['task'][batch_idx]
+            if '"role"' not in instruction:
+                instruction = "user:\nTask:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
+                data = self._add_text(data, instruction, need_loss=False)
+            else:
+                conv = json.loads(instruction)
+                for a_conv in conv:
+                    if a_conv['role'] == "assistant":
+                        a_conv = "assistant:\n" + a_conv['content']
+                        data = self._add_text(data, a_conv, need_loss=True)
+                    elif a_conv['role'] == "user" or a_conv['role'] == 'system':
+                        a_conv = "user\n" + a_conv['content']
+                        data = self._add_text(data, a_conv, need_loss=False)
+                    else:
+                        raise NotImplementedError
             next_images = []
             for key in sorted(sample.keys(), reverse=True):
                 if "images." in key and "next" in key:
                     next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
             next_img_num = len(next_images)
             # next_images = cv2.hconcat(next_images)
-            next_images = next_images[-1]
             if self.visual_gen:
-                data = self._add_image(
-                    data, 
-                    pil_img2rgb(Image.fromarray(next_images)),
-                    need_loss=True, 
-                    need_vae=False, 
-                    need_vit=True, 
-                )
+                if len(next_images) > 0:
+                    next_images = next_images[-1]
+                    data = self._add_image(
+                        data, 
+                        pil_img2rgb(Image.fromarray(next_images)),
+                        need_loss=True, 
+                        need_vae=False, 
+                        need_vit=True, 
+                    )
             if self.action_gen:
                 actions = sample[ACTION][batch_idx]
                 data = self._add_action(
@@ -600,7 +605,6 @@ class PackedDataset:
                 sequence_status['packed_text_ids'].extend(shifted_text_ids)
                 sequence_status['packed_text_indexes'].extend(range(curr, curr + len(shifted_text_ids)))
                 if item['loss'] == 1:
-                    import ipdb;ipdb.set_trace()
                     sequence_status['ce_loss_indexes'].extend(range(curr, curr + len(shifted_text_ids)))
                     sequence_status['ce_loss_weights'].extend(
                         [len2weight(len(shifted_text_ids))] * len(shifted_text_ids)
