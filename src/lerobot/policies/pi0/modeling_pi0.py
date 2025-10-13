@@ -692,10 +692,12 @@ class PI0Policy(PreTrainedPolicy):
         self.dtype = self.model.state_proj.weight.dtype
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
-            batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
-        actions = batch[ACTION]
-        act_ids = self.tokenize_action(actions)
-        batch['action'] = act_ids
+            if ACTION in batch.keys():
+                batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
+        if ACTION in batch.keys():
+            actions = batch[ACTION]
+            act_ids = self.tokenize_action(actions)
+            batch['action'] = act_ids
         datas = self.dataset(batch)
         data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
         data_batch = autocast(data_batch, torch.float32, self.dtype)
