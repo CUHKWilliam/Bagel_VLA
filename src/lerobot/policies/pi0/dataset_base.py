@@ -392,12 +392,13 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                         need_vit=True, 
                     )
             if self.action_gen:
-                actions = sample[ACTION][batch_idx]
-                data = self._add_action(
-                    data,
-                    actions,
-                    need_loss=True,
-                )
+                if ACTION in sample.keys():
+                    actions = sample[ACTION][batch_idx]
+                    data = self._add_action(
+                        data,
+                        actions,
+                        need_loss=True,
+                    )
             datas.append(data)
         return datas
     
