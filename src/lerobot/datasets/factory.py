@@ -87,6 +87,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
+    import ipdb;ipdb.set_trace()
     all_datasets = []
     if cfg.dataset.repo_id is not None:
         if "," in cfg.dataset.repo_id:
@@ -147,6 +148,12 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 transform=image_transforms,
             )
         all_datasets.append(dataset)
+    num_frames = 0
+    num_episodes = 0
+    for ds in all_datasets:
+        num_frames += ds.num_frames
+        num_episodes += ds.num_episodes
     dataset = torch.utils.data.ConcatDataset(all_datasets)
-    
+    dataset.num_frames = num_frames
+    dataset.num_episodes = num_episodes
     return dataset

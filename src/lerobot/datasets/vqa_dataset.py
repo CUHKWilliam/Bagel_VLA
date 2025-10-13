@@ -4,6 +4,9 @@ import json
 import imageio
 import cv2
 import pickle
+from transformers import AutoProcessor
+
+
 
 class VQADataset(torch.utils.data.Dataset):
     def __init__(self, repo_id, transform):
@@ -21,18 +24,20 @@ class VQADataset(torch.utils.data.Dataset):
 
         self.data = data
         self.transform = transform
-        self.num_frames = None
+        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct",use_fast=False)
 
     def __getitem__(self, idx):
         a_vqa_data = self.data[idx]
         item = {}
         video_path = os.path.join(self.root_path, a_vqa_data['metadata']['video_location'])
         convs = a_vqa_data['conversations']
-        chat = processor.apply_chat_template(convs, tokenize=False, add_generation_prompt=True)
+        chat = self.processor.apply_chat_template(convs, tokenize=False, add_generation_prompt=True)
+        vid = imageio.get_reader(video_path)
         image0 = vid.get_data(0)
         image1 = vid.get_data(vid.count_frames() - 1)
         image = cv2.hconcat([image0, image1])
-        image = self.transform(image)
+        if self.transform is not None:
+            image = self.transform(image)
         item['observation.images.image'] = image
         item['task'] = chat
         return item
@@ -40,14 +45,6 @@ class VQADataset(torch.utils.data.Dataset):
     def __len__(self, ):
         return len(self.data)
     
-    @property
-    def num_episodes(self, ):
-        return self.num_episodes
-    
-    @property
-    def num_frames(self, ):
-        return self.num_frames
-        
 
 class MultiVQADataset(torch.utils.data.Dataset):
     def __init__(self, repo_ids, transform):
@@ -68,6 +65,7 @@ class MultiVQADataset(torch.utils.data.Dataset):
         self.data = data
         self.root_paths = root_paths
         self.transform = transform
+        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct",use_fast=False)
 
     def __len__(self, ):
         return len(self.data)
@@ -78,20 +76,14 @@ class MultiVQADataset(torch.utils.data.Dataset):
         item = {}
         video_path = os.path.join(root_path, a_vqa_data['metadata']['video_location'])
         convs = a_vqa_data['conversations']
-        chat = processor.apply_chat_template(convs, tokenize=False, add_generation_prompt=True)
+        chat = self.processor.apply_chat_template(convs, tokenize=False, add_generation_prompt=True)
         image0 = vid.get_data(0)
         image1 = vid.get_data(vid.count_frames() - 1)
         image = cv2.hconcat([image0, image1])
-        image = self.transform(image)
+        if self.transform is not None:
+            image = self.transform(image)
         item['observation.images.image'] = image
         item['task'] = chat
         return item
     
-    @property
-    def num_episodes(self,):
-        return self.num_episodes
-    
-    @property
-    def num_frames(self,):
-        return self.num_frames
-        
+       

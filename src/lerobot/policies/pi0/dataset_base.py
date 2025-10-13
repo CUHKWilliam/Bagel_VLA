@@ -600,6 +600,7 @@ class PackedDataset:
                 sequence_status['packed_text_ids'].extend(shifted_text_ids)
                 sequence_status['packed_text_indexes'].extend(range(curr, curr + len(shifted_text_ids)))
                 if item['loss'] == 1:
+                    import ipdb;ipdb.set_trace()
                     sequence_status['ce_loss_indexes'].extend(range(curr, curr + len(shifted_text_ids)))
                     sequence_status['ce_loss_weights'].extend(
                         [len2weight(len(shifted_text_ids))] * len(shifted_text_ids)
