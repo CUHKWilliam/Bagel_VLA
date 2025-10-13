@@ -775,6 +775,43 @@ class LeRobotDataset(torch.utils.data.Dataset):
             write_image(image, fpath)
         else:
             self.image_writer.save_image(image=image, fpath=fpath)
+    
+    def add_vqa_frame(self, frame, task):
+        """
+        This function only adds the frame to the episode_buffer. Apart from images — which are written in a
+        temporary directory — nothing is written to disk. To save those frames, the 'save_episode()' method
+        then needs to be called.
+        """
+        # Convert torch to numpy if needed
+        for name in frame:
+            if isinstance(frame[name], torch.Tensor):
+                frame[name] = frame[name].numpy()
+
+        self.episode_buffer = self.create_episode_buffer()
+        frame_index = self.episode_buffer["size"]
+        self.episode_buffer["frame_index"].append(frame_index)
+        self.episode_buffer["timestamp"].append(0)
+        self.episode_buffer["task"].append(task)
+        self.episode_buffer['index'] = [0]
+        self.episode_buffer['task_index'] = [0]
+
+        # Add frame features to episode_buffer
+        for key in frame:
+            img_path = self._get_image_file_path(
+                episode_index=0, image_key=key, frame_index=frame_index
+            )
+            if frame_index == 0:
+                img_path.parent.mkdir(parents=True, exist_ok=True)
+            self._save_image(frame[key], img_path)
+            if key not in self.episode_buffer.keys():
+                self.episode_buffer[key] = []
+            self.episode_buffer[key].append(str(img_path))
+        # size and task are special cases that won't be added to hf_dataset
+        episode_buffer = self.episode_buffer
+        episode_length = episode_buffer.pop("size")
+        tasks = episode_buffer.pop("task")
+        self._wait_image_writer()
+        self._save_episode_table(episode_buffer, episode_index)
 
     def add_frame(self, frame: dict, task: str, timestamp: float | None = None) -> None:
         """

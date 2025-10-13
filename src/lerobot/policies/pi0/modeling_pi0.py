@@ -466,7 +466,7 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        # dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
         Args:
@@ -479,13 +479,13 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
+        # self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        # self.normalize_targets = Normalize(
+        #     config.output_features, config.normalization_mapping, dataset_stats
+        # )
+        # self.unnormalize_outputs = Unnormalize(
+        #     config.output_features, config.normalization_mapping, dataset_stats
+        # )
         self.model = PI0FlowMatching(config)
         self.reset()
         
@@ -562,8 +562,7 @@ class PI0Policy(PreTrainedPolicy):
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
-        batch = self.normalize_inputs(batch)
-
+        # batch = self.normalize_inputs(batch)
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:

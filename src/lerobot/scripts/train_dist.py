@@ -205,7 +205,7 @@ def train(cfg: TrainPipelineConfig):
     cfg.policy.device = "cpu"
     policy = make_policy(
         cfg=cfg.policy,
-        ds_meta=dataset.meta,
+        # ds_meta=dataset.meta,
     ).cpu()
     torch.cuda.empty_cache()
     if accelerator.is_main_process:
