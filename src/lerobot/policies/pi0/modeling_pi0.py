@@ -219,7 +219,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -849,9 +849,9 @@ class PI0FlowMatching(nn.Module):
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
                 param.requires_grad = True
-            # for layer_idx in range(12):
-            #     for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
-            #         p.requires_grad = False
+            for layer_idx in range(23):
+                for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
+                    p.requires_grad = False
             
             if training_args.freeze_vae and training_args.visual_gen:
                 for param in vae_model.parameters():

@@ -137,14 +137,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         if "," in cfg.dataset.vqa_repo_id:
             cfg.dataset.vqa_repo_id = cfg.dataset.vqa_repo_id.split(',')
         if isinstance(cfg.dataset.vqa_repo_id, str):
-            vqa_dataset = VQADataset(
+            dataset = VQADataset(
                 cfg.dataset.vqa_repo_id,
-                image_transforms=image_transforms,
+                transform=image_transforms,
             )
         else:
-            vqa_dataset = MultiVQADataset(
+            dataset = MultiVQADataset(
                 cfg.dataset.vqa_repo,
-                image_transforms=image_transforms,
+                transform=image_transforms,
             )
         all_datasets.append(dataset)
     dataset = torch.utils.data.ConcatDataset(all_datasets)

@@ -3,17 +3,26 @@ import os
 import json
 import imageio
 import cv2
-
+import pickle
 
 class VQADataset(torch.utils.data.Dataset):
     def __init__(self, repo_id, transform):
         self.root_path = repo_id
         data = []
-        for json_name in os.walk(self.root_path):
+        self.num_episodes = 0
+        self.num_frames = 0
+        for json_name in os.listdir(self.root_path):
             if json_name.endswith('json'):
                 data += json.load(open(os.path.join(self.root_path, json_name), 'r'))
+                meta_file_path = os.path.join(self.root_path, json_name.replace('.json', '_meta.pkl'))
+                meta = pickle.load(open(meta_file_path, 'rb'))
+                self.num_episodes += meta['num_episodes']
+                self.num_frames += meta['num_frames']
+
         self.data = data
         self.transform = transform
+        self.num_frames = None
+
     def __getitem__(self, idx):
         a_vqa_data = self.data[idx]
         item = {}
@@ -27,19 +36,35 @@ class VQADataset(torch.utils.data.Dataset):
         item['observation.images.image'] = image
         item['task'] = chat
         return item
+
     def __len__(self, ):
         return len(self.data)
+    
+    @property
+    def num_episodes(self, ):
+        return self.num_episodes
+    
+    @property
+    def num_frames(self, ):
+        return self.num_frames
+        
 
 class MultiVQADataset(torch.utils.data.Dataset):
     def __init__(self, repo_ids, transform):
         data = []
         root_paths = []
+        self.num_episodes = 0
+        self.num_frames = 0
         for repo_id in repo_ids:
-            for json_name in os.walk(repo_id):
+            for json_name in os.listdir(repo_id):
                 if json_name.endswith('json'):
                     a_data = json.load(open(os.path.join(repo_id, json_name), 'r'))
                     data += a_data
                     root_paths += [repo_id for _ in range(len(a_data))]
+                    meta_file_name = os.path.join(os.path.join(repo_id, json_name.replace(".json", "_meta.pkl")))
+                    meta = pickle.load(open(meta_file_name), 'rb')
+                    self.num_episodes += meta['num_epidoes']
+                    self.num_frames += meta['num_frames']
         self.data = data
         self.root_paths = root_paths
         self.transform = transform
@@ -61,3 +86,12 @@ class MultiVQADataset(torch.utils.data.Dataset):
         item['observation.images.image'] = image
         item['task'] = chat
         return item
+    
+    @property
+    def num_episodes(self,):
+        return self.num_episodes
+    
+    @property
+    def num_frames(self,):
+        return self.num_frames
+        
