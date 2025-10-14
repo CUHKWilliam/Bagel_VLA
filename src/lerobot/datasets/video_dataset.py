@@ -5,6 +5,7 @@ import imageio
 import cv2
 import pickle
 import imageio.v3 as iio
+import numpy as np
 
 question_templates = [
     "The task is {}. Please predict the image for the next moment",
@@ -131,7 +132,7 @@ class VideoDataset(torch.utils.data.Dataset):
         a_video_data = self.data[idx]
         item = {}
         if 'id' in a_video_data:
-            video_path = os.path.join(self.root_path, '{}.webm'.format(a_video_data['id']))
+            video_path = os.path.join(self.root_path, "videos", '{}.webm'.format(a_video_data['id']))
             frames_iter = iio.imiter(video_path)
             frames = []
             for frame in frames_iter:
@@ -139,11 +140,10 @@ class VideoDataset(torch.utils.data.Dataset):
             image = frames[0]
             num_frames = len(frames)
             next_image = frames[np.random.randint(low=int(0.5*num_frames), high=int(num_frames))]
-            import ipdb;ipdb.set_trace()
             convs = [
                 {
                     "role": "user",
-                    "content": np.random.choice(question_templates).format(a_video_data['label'])
+                    "content": np.random.choice(question_templates).format("\""+a_video_data['label']+"\"")
                 }
             ]
         else:
@@ -161,7 +161,7 @@ class VideoDataset(torch.utils.data.Dataset):
         return len(self.data)
     
 
-class MultiVideoADataset(torch.utils.data.Dataset):
+class MultiVideoDataset(torch.utils.data.Dataset):
     def __init__(self, repo_ids, transform):
         data = []
         root_paths = []
