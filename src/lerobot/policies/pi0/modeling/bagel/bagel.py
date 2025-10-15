@@ -282,7 +282,7 @@ class Bagel(PreTrainedModel):
         else:
             attention_mask = nested_attention_masks
       
-        if self.config.visual_und:
+        if self.config.visual_und and packed_vit_token_indexes is not None:
             cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
             cu_seqlens = cu_seqlens.to(torch.int32)
             max_seqlen = torch.max(vit_token_seqlens).item()

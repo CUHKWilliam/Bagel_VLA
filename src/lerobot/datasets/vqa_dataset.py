@@ -155,6 +155,9 @@ class VQADataset(torch.utils.data.Dataset):
                     data = a_data
                 else:
                     data = pandas.concat([data, a_data])
+            elif name.endswith('jsonl'):
+                data = open(os.path.join(self.root_path, name), 'r').readlines()
+                meta_file_path = os.path.join(self.root_path, name.replace('.jsonl', '_meta.pkl'))
             else:
                 continue
             meta = pickle.load(open(meta_file_path, 'rb'))
@@ -172,7 +175,7 @@ class VQADataset(torch.utils.data.Dataset):
         else:
             raise NotImplementedError
         item = {}
-        if 'metadata' in a_vqa_data.keys() and 'video_location' in a_vqa_data['metadata'].keys():
+        if isinstance(a_vqa_data, dict) and 'metadata' in a_vqa_data.keys() and 'video_location' in a_vqa_data['metadata'].keys():
             ## cosmos
             video_path = os.path.join(self.root_path, a_vqa_data['metadata']['video_location'])
             convs = a_vqa_data['conversations']
@@ -181,7 +184,7 @@ class VQADataset(torch.utils.data.Dataset):
             images = []
             for image_index in image_indices:
                 images.append(vid.get_data(image_index))
-        elif 'image_url' in a_vqa_data.keys():
+        elif isinstance(a_vqa_data, dict) and 'image_url' in a_vqa_data.keys():
             ## Capfusion
             image_dir = os.path.join(self.root_path, "images")
             os.makedirs(image_dir, exist_ok=True)
@@ -197,7 +200,7 @@ class VQADataset(torch.utils.data.Dataset):
                         {"role": "user", 'content': [{'type': "text", 'text': np.random.choice(question_templates)}]},
                         {'role': "assistant", "content": [{'type': "text", "text": desc}]}
                     ]
-        elif 'image' in a_vqa_data.keys():
+        elif isinstance(a_vqa_data, dict) and 'image' in a_vqa_data.keys() and 'bytes' in a_vqa_data['image']:
             ## robo2vlm
             image = np.asarray(Image.open(io.BytesIO(a_vqa_data['image']['bytes'])))
             images = [image]
@@ -207,6 +210,23 @@ class VQADataset(torch.utils.data.Dataset):
                     {'role': "user", "content": [{'type': "text", "text": "{}. Choices: {}".format(a_vqa_data['question'], choices_text)}]},
                     {'role': "assistant", "content": [{"type": "text", "text": np.random.choice(answer_templates).format(ans)}]}
             ]
+        elif isinstance(a_vqa_data, str):
+            ## cambrian
+            a_vqa_data = json.loads(a_vqa_data)
+            if 'image' in a_vqa_data.keys() and a_vqa_data['image'] != "" and a_vqa_data['image'] is not None:
+                image_path = os.path.join(a_vqa_data['image'], self.root_path)
+                # image = np.asarray(Image.open(image_path))
+                # images = [image]
+                images = []
+            else:
+                images = []
+            orig_conv = a_vqa_data['conversations']
+            convs = []
+            for a_orig_conv in orig_conv:
+                if a_orig_conv['from'] == "human":
+                    convs.append({'role': "user", "content": [{'type': 'text', "text": a_orig_conv['value']}]})
+                elif a_orig_conv['from'] == 'gpt':
+                    convs.append({'role': 'assistant', 'content': [{'type': 'text', 'text': a_orig_conv['value']}]})
         else:
             raise NotImplementedError
         if self.transform is not None:
