@@ -703,7 +703,8 @@ class PI0Policy(PreTrainedPolicy):
         data_batch = autocast(data_batch, torch.float32, self.dtype)
         if training_args.visual_gen:
             with torch.no_grad():
-                data_batch['padded_latent'] = self.model.vae_model.encode(data_batch.pop('padded_images'))
+                if "padded_latent" in data_batch.keys():
+                    data_batch['padded_latent'] = self.model.vae_model.encode(data_batch.pop('padded_images'))
         return data_batch
 
 
@@ -993,7 +994,7 @@ class PI0FlowMatching(nn.Module):
         loss = torch.tensor(0).float().cuda()
         if ret['ce'] is not None:
             ce = ret['ce']
-            if self.bagel_model.config.visual_gen and not visual_gen_complete:
+            if self.bagel_model.config.visual_gen and "mse_loss_indexes" in data_batch.keys() and not visual_gen_complete:
                 ce = ce.detach()
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes'])).cuda()
             if training_args.ce_loss_reweighting:
@@ -1008,7 +1009,7 @@ class PI0FlowMatching(nn.Module):
             loss_dict["ce"] = torch.tensor(0).cuda().float()
             total_ce_tokens = torch.tensor(0).cuda().float()
         
-        if self.bagel_model.config.visual_gen:
+        if self.bagel_model.config.visual_gen and "mse_loss_indexes" in data_batch.keys():
             total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
             mse = ret['mse'].clone()
             mse = mse.mean(dim=-1).sum() / total_mse_tokens
@@ -1017,7 +1018,6 @@ class PI0FlowMatching(nn.Module):
         else:
             loss_dict["mse"] = torch.tensor(0).cuda().float()
             total_mse_tokens = torch.tensor(0).cuda()
-    
         if get_time:
             loss_dict['time'] = dt
         return loss_dict, loss

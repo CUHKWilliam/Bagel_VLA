@@ -296,8 +296,7 @@ class Bagel(PreTrainedModel):
             vit_token_pos_emb = self.vit_pos_embed(packed_vit_position_ids)
             packed_vit_token_embed = packed_vit_token_embed + vit_token_pos_emb
             packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
-
-        if self.config.visual_gen:
+        if self.config.visual_gen and padded_latent is not None:
             p = self.latent_patch_size
             packed_latent = []
             for latent, (h, w) in zip(padded_latent, patchified_vae_latent_shapes):
@@ -336,13 +335,13 @@ class Bagel(PreTrainedModel):
             **extra_inputs,
         )
 
-        mse = None
-        if self.config.visual_gen:
+        mse = torch.tensor(0.).float().cuda()
+        if self.config.visual_gen and padded_latent is not None:
             packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
             target = noise - packed_latent_clean # NOTE: v_t=dx_t/dt=x_1-x_0, pointing from data to noise
             has_mse = packed_timesteps > 0
             mse = (packed_mse_preds - target[has_mse]) ** 2
-        ce = None
+        ce = torch.tensor(0.).float().cuda()
         if ce_loss_indexes is not None:
             packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
             ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
