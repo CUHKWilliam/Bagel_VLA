@@ -219,7 +219,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -1075,7 +1075,7 @@ class PI0FlowMatching(nn.Module):
             # observation_image = cv2.hconcat(observation_images)
             observation_image = observation_images[-1]
             # add text
-            prompt = "user\nTask:" + batch['task'][0] + ". Please predict the next observation and the action."
+            prompt = "Task:" + batch['task'][0] + ". Please predict the next observation and the action."
             generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
                 curr_kvlens=newlens,
                 curr_rope=new_rope, 

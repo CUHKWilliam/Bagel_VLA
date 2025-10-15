@@ -143,7 +143,7 @@ class VideoDataset(torch.utils.data.Dataset):
             convs = [
                 {
                     "role": "user",
-                    "content": np.random.choice(question_templates).format("\""+a_video_data['label']+"\"")
+                    "content": [{'type': 'text', 'text': np.random.choice(question_templates).format("\""+a_video_data['label']+"\"")}]
                 }
             ]
         else:
@@ -152,7 +152,8 @@ class VideoDataset(torch.utils.data.Dataset):
             image = self.transform(image)
             next_image = self.transform(next_image)
         image =  torch.from_numpy(image / 255.).permute((2, 0, 1))
-        item['observation.images.image'] = image
+        next_image = torch.from_numpy(next_image / 255.).permute((2, 0, 1))
+        item['actionless_video.images.image'] = image
         item['next.images.image'] = next_image
         item['task'] = json.dumps(convs)
         return item

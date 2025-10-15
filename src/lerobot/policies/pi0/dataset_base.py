@@ -349,38 +349,66 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         for batch_idx in range(batch_size):
             # observation_images = []
             data = self._init_data()
-            
+            ## For action generation 
             for key in sorted(sample.keys(), reverse=True):
                 if "images." in key and "observation" in key:
-                    # observation_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
-                     data = self._add_image(
+                    image = sample[key][batch_idx]
+                    data = self._add_image(
                         data,
                         pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
                         need_loss=False,
                         need_vae=self.visual_gen,
                         need_vit=True,
                     )
+            ## For VQA images
+            image_cnt = 0
+            for key in sorted(sample.keys()):
+                if "images" in key and "vqa" in key:
+                    image_cnt += 1
+            for image_idx in range(image_cnt):
+                key = "vqa.images.image.{}".format(image_idx)
+                image = sample[key][batch_idx]
+                data = self._add_image(
+                    data,
+                    pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                    need_loss=False,
+                    need_vae=False,
+                    need_vit=True,
+                )
+            ## For actionless video
+            for key in sample.keys():
+                if "images" in key and "actionless_video" in key:
+                    image = sample[key][batch_idx]
+                    data = self._add_image(
+                        data,
+                        pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                        need_loss=False,
+                        need_vae=True,
+                        need_vit=True,
+                    )
+
             instruction = sample['task'][batch_idx]
             if "action" in sample.keys():
-                instruction = "user:\nTask:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
+                instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
                 data = self._add_text(data, instruction, need_loss=False)
             else:
                 conv = json.loads(instruction)
                 for a_conv in conv:
                     if a_conv['role'] == "assistant":
-                        a_conv = "assistant:\n" + a_conv['content']
+                        a_conv = a_conv['content'][0]['text']
                         data = self._add_text(data, a_conv, need_loss=True)
                     elif a_conv['role'] == "user" or a_conv['role'] == 'system':
-                        a_conv = "user\n" + a_conv['content']
+                        a_conv = a_conv['content'][0]['text']
                         data = self._add_text(data, a_conv, need_loss=False)
                     else:
                         raise NotImplementedError
+
+            ## For action generation
             next_images = []
             for key in sorted(sample.keys(), reverse=True):
                 if "images." in key and "next" in key:
                     next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
             next_img_num = len(next_images)
-            # next_images = cv2.hconcat(next_images)
             if self.visual_gen:
                 if len(next_images) > 0:
                     next_images = next_images[-1]
