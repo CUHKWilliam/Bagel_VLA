@@ -6,6 +6,31 @@ import cv2
 import pickle
 import pandas
 import numpy as np
+from PIL import Image
+import io
+
+answer_templates = [
+    "The correct choice is {}",
+    "The right answer is {}",
+    "The answer should be {}",
+    "I believe the answer is {}",
+    "Based on the options, the answer is {}",
+    "After reviewing the choices, the answer is {}",
+    "The best selection appears to be {}",
+    "My selection is {}",
+    "Option {} is correct",
+    "Choice {} is the right answer",
+    "The appropriate response is {}",
+    "The accurate answer is {}",
+    "The proper selection is {}",
+    "Among the options, {} is correct",
+    "The answer likely is {}",
+    "The correct option is {}",
+    "The valid choice is {}",
+    "The answer corresponds to {}",
+    "The right selection is {}",
+    "After consideration, the answer is {}"
+]
 question_templates = [
     "What is depicted in this picture?",
     "Can you provide a description of this image?",
@@ -172,6 +197,16 @@ class VQADataset(torch.utils.data.Dataset):
                         {"role": "user", 'content': [{'type': "text", 'text': np.random.choice(question_templates)}]},
                         {'role': "assistant", "content": [{'type': "text", "text": desc}]}
                     ]
+        elif 'image' in a_vqa_data.keys():
+            ## robo2vlm
+            image = np.asarray(Image.open(io.BytesIO(a_vqa_data['image']['bytes'])))
+            images = [image]
+            choices_text = a_vqa_data['choices']
+            ans = eval(choices_text)[a_vqa_data['correct_answer']]
+            convs = [
+                    {'role': "user", "content": [{'type': "text", "text": "{}. Choices: {}".format(a_vqa_data['question'], choices_text)}]},
+                    {'role': "assistant", "content": [{"type": "text", "text": np.random.choice(answer_templates).format(ans)}]}
+            ]
         else:
             raise NotImplementedError
         if self.transform is not None:
