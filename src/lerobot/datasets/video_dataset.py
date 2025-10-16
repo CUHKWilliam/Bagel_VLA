@@ -117,14 +117,14 @@ class VideoDataset(torch.utils.data.Dataset):
         data = []
         self.num_episodes = 0
         self.num_frames = 0
-        for json_name in os.listdir(self.root_path):
-            if json_name.endswith('json'):
-                data += json.load(open(os.path.join(self.root_path, json_name), 'r'))
-                meta_file_path = os.path.join(self.root_path, json_name.replace('.json', '_meta.pkl'))
+        for file_name in os.listdir(self.root_path):
+            if file_name.endswith('json'):
+                ## for something-something-v2 and ego4d
+                data += json.load(open(os.path.join(self.root_path, file_name), 'r'))
+                meta_file_path = os.path.join(self.root_path, file_name.replace('.json', '_meta.pkl'))
                 meta = pickle.load(open(meta_file_path, 'rb'))
                 self.num_episodes += meta['num_episodes']
                 self.num_frames += meta['num_frames']
-
         self.data = data
         self.transform = transform
         
@@ -132,6 +132,7 @@ class VideoDataset(torch.utils.data.Dataset):
         a_video_data = self.data[idx]
         item = {}
         if 'id' in a_video_data:
+            ## for somethiing-something-v2
             video_path = os.path.join(self.root_path, "videos", '{}.webm'.format(a_video_data['id']))
             frames_iter = iio.imiter(video_path)
             frames = []
@@ -144,6 +145,21 @@ class VideoDataset(torch.utils.data.Dataset):
                 {
                     "role": "user",
                     "content": [{'type': 'text', 'text': np.random.choice(question_templates).format("\""+a_video_data['label']+"\"")}]
+                }
+            ]
+        elif 'image' in a_video_data:
+            ## for ego4d-video
+            frames = np.load(os.path.join(self.root_path, a_video_data['image']))
+            image = frames[0].transpose((1, 2, 0)) * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406] )
+            image = np.clip(image, a_min=0, a_max=1) * 255
+            num_frames = len(frames)
+            next_image = frames[np.random.randint(low=int(0.5*num_frames), high=int(num_frames))]
+            next_image = next_image.transpose((1, 2, 0)) * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406] )
+            next_image = np.clip(next_image,  a_min=0, a_max=1) * 255
+            convs = [
+                {
+                    "role": "user",
+                    "content": [{'type': 'text', 'text': np.random.choice(question_templates).format("\""+a_video_data['caption']+"\"")}]
                 }
             ]
         else:
