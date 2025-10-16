@@ -215,9 +215,9 @@ class VQADataset(torch.utils.data.Dataset):
             a_vqa_data = json.loads(a_vqa_data)
             if 'image' in a_vqa_data.keys() and a_vqa_data['image'] != "" and a_vqa_data['image'] is not None:
                 image_path = os.path.join(a_vqa_data['image'], self.root_path)
-                # image = np.asarray(Image.open(image_path))
-                # images = [image]
-                images = []
+                image = np.asarray(Image.open(image_path))
+                images = [image]
+                # images = []
             else:
                 images = []
             orig_conv = a_vqa_data['conversations']
