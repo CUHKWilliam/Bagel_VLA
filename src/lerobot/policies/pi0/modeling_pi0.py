@@ -703,7 +703,7 @@ class PI0Policy(PreTrainedPolicy):
         data_batch = autocast(data_batch, torch.float32, self.dtype)
         if training_args.visual_gen:
             with torch.no_grad():
-                if "padded_latent" in data_batch.keys():
+                if "padded_images" in data_batch.keys():
                     data_batch['padded_latent'] = self.model.vae_model.encode(data_batch.pop('padded_images'))
         return data_batch
 
@@ -992,7 +992,7 @@ class PI0FlowMatching(nn.Module):
         ## TODO:
         loss_dict = {} 
         loss = torch.tensor(0).float().cuda()
-        if ret['ce'] is not None:
+        if ret['ce'] is not None and "ce_loss_indexes" in data_batch.keys():
             ce = ret['ce']
             if self.bagel_model.config.visual_gen and "mse_loss_indexes" in data_batch.keys() and not visual_gen_complete:
                 ce = ce.detach()
