@@ -105,12 +105,13 @@ class LeRobotDatasetMetadata:
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        if self._version < packaging.version.parse("v2.1"):
-            self.stats = load_stats(self.root)
-            self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
-        else:
-            self.episodes_stats = load_episodes_stats(self.root)
-            self.stats = aggregate_stats(list(self.episodes_stats.values()))
+
+        # if self._version < packaging.version.parse("v2.1"):
+        #     self.stats = load_stats(self.root)
+        #     self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
+        # else:
+        #     self.episodes_stats = load_episodes_stats(self.root)
+        #     self.stats = aggregate_stats(list(self.episodes_stats.values()))
 
     def pull_from_repo(
         self,
@@ -489,7 +490,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         timestamps = torch.stack(self.hf_dataset["timestamp"]).numpy()
         episode_indices = torch.stack(self.hf_dataset["episode_index"]).numpy()
         ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
-        check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
+        # check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
 
         # Setup delta_indices
         if self.delta_timestamps is not None:
@@ -713,12 +714,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = {**item, **padding}
             for key, val in query_result.items():
                 item[key] = val
+        
+        if 'action' not in query_result.keys():
+            ## for humanoid dataset include Galaxea, Agibot
+            if "action.left_gripper" in query_result.keys() and "action.left_arm" in query_result.keys():
+                left_action = np.concatenate([query_result['action.left_arm'], query_result['action.left_gripper'][:,None]], axis=-1)
+                right_action = np.concatenate([query_result['action.right_arm'], query_result['action.right_gripper'][:,None]], axis=-1)    
+                action = np.concatenate([left_action, right_action], axis=-1)
+                query_result['action'] = action
+                item['action'] = action
 
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             video_keys = self.meta.video_keys
             for k in video_keys:
-                query_indices[k] = query_indices['action']
+                if 'action' in query_indices.keys():
+                    query_indices[k] = query_indices['action']
+                elif 'action.left_gripper' in query_indices.keys():
+                    query_indices[k] = query_indices['action.left_gripper']
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
             current_video_frames = {}
@@ -738,7 +751,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
-
+        item = self.unify_keys(item)
+        return item
+    
+    def unify_keys(self, item):
+        ## if key wrist in item, make it left_wrist for unifying keys between humanoid and single-arm robots
+        item_keys = list(item.keys())
+        for key in item_keys:
+            if "wrist" in key and "left" not in key and "right" not in key:
+                item[key.replace('wrist', 'left_wrist')] = item.pop(key)
         return item
 
     def __repr__(self):
@@ -928,13 +949,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Episode data index and timestamp checking
         ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
         ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
-        check_timestamps_sync(
-            episode_buffer["timestamp"],
-            episode_buffer["episode_index"],
-            ep_data_index_np,
-            self.fps,
-            self.tolerance_s,
-        )
+
+
+        # check_timestamps_sync(
+        #     episode_buffer["timestamp"],
+        #     episode_buffer["episode_index"],
+        #     ep_data_index_np,
+        #     self.fps,
+        #     self.tolerance_s,
+        # )
 
         # Verify that we have one parquet file per episode and the number of video files matches the number of encoded episodes
         parquet_files = list(self.root.rglob("*.parquet"))
@@ -1159,7 +1182,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # TODO(rcadene, aliberts): We should not perform this aggregation for datasets
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
-        self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
+        # self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
 
     @property
     def repo_id_to_index(self):

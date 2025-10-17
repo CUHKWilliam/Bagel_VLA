@@ -36,6 +36,7 @@ from lerobot.datasets.video_dataset import (
     VideoDataset,
     MultiVideoDataset,
 )
+import glob
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -62,14 +63,13 @@ def resolve_delta_timestamps(
             returns `None` if the resulting dict is empty.
     """
     delta_timestamps = {}
-    for key in ds_meta.features:
+    for key in ds_meta.features.keys():
         if key == "next.reward" and cfg.reward_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
-        if key == "action" and cfg.action_delta_indices is not None:
+        if "action" in key and cfg.action_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
         if key.startswith("observation.") and cfg.observation_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
-
     if len(delta_timestamps) == 0:
         delta_timestamps = None
 
@@ -95,7 +95,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     if cfg.dataset.repo_id is not None:
         if "," in cfg.dataset.repo_id:
             cfg.dataset.repo_id = cfg.dataset.repo_id.split(",")
-        if isinstance(cfg.dataset.repo_id, str):
+        if isinstance(cfg.dataset.repo_id, str) and not "*" in cfg.dataset.repo_id:
             ds_meta = LeRobotDatasetMetadata(
                 cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
             )
@@ -109,11 +109,18 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
             )
-            if cfg.dataset.use_imagenet_stats:
-                for key in dataset.meta.camera_keys:
-                    for stats_type, stats in IMAGENET_STATS.items():
-                        dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+            # if cfg.dataset.use_imagenet_stats:
+            #     for key in dataset.meta.camera_keys:
+            #         for stats_type, stats in IMAGENET_STATS.items():
+            #             dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
         else:
+            if isinstance(cfg.dataset.repo_id, str):
+                cfg.dataset.repo_id = glob.glob(cfg.dataset.repo_id)
+            elif isinstance(cfg.dataset.repo_id, list):
+                repo_id2 = []
+                for a_repo_id in cfg.dataset.repo_id:
+                    repo_id2 += glob.glob(a_repo_id)
+                cfg.dataset.repo_id = ",".join(repo_id22)
             dataset = MultiLeRobotDataset(
                 cfg.dataset.repo_id,
                 # TODO(aliberts): add proper support for multi dataset
@@ -128,17 +135,16 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 a_dataset.delta_timestamps = delta_timestamps
                 a_dataset.delta_indices = get_delta_indices(a_dataset.delta_timestamps, a_dataset.fps)
 
-            dataset.meta = copy.deepcopy(dataset._datasets[0].meta)
-
-            if cfg.dataset.use_imagenet_stats:
-                for a_dataset in dataset._datasets:
-                    for key in dataset.meta.camera_keys:
-                        for stats_type, stats in IMAGENET_STATS.items():
-                            dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+            # dataset.meta = copy.deepcopy(dataset._datasets[0].meta)
+            # if cfg.dataset.use_imagenet_stats:
+            #     for a_dataset in dataset._datasets:
+            #         for key in dataset.meta.camera_keys:
+            #             for stats_type, stats in IMAGENET_STATS.items():
+            #                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
         all_datasets.append(dataset)
 
     if cfg.dataset.vqa_repo_id is not None:
-        if "," in cfg.dataset.vqa_repo_id:
+        if "," in cfg.dataset.vqa_repo_id and not "*" in cfg.dataset.vqa_repo_id:
             cfg.dataset.vqa_repo_id = cfg.dataset.vqa_repo_id.split(',')
         if isinstance(cfg.dataset.vqa_repo_id, str):
             dataset = VQADataset(
@@ -146,13 +152,21 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 transform=image_transforms,
             )
         else:
+            if isinstance(cfg.dataset.vqa_repo_id, str):
+                cfg.dataset.vqa_repo_id = glob.glob(cfg.dataset.vqa_repo_id)
+            elif isinstance(cfg.dataset.repo_id, list):
+                repo_id2 = []
+                for a_repo_id in cfg.dataset.vqa_repo_id:
+                    repo_id2 += glob.glob(a_repo_id)
+                cfg.dataset.vqa_repo_id = ",".join(repo_id22)
+            
             dataset = MultiVQADataset(
                 cfg.dataset.vqa_repo,
                 transform=image_transforms,
             )
         all_datasets.append(dataset)
     if cfg.dataset.video_repo_id is not None:
-        if "," in cfg.dataset.video_repo_id:
+        if "," in cfg.dataset.video_repo_id and not "*" in cfg.dataset.video_repo_id:
             cfg.dataset.video_repo_id = cfg.dataset.video_repo_id.split(',')
         if isinstance(cfg.dataset.video_repo_id, str):
             dataset = VideoDataset(
@@ -160,6 +174,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 transform=image_transforms,
             )
         else:
+            if isinstance(cfg.dataset.video_repo_id, str):
+                cfg.dataset.video_repo_id = glob.glob(cfg.dataset.video_repo_id)
+            elif isinstance(cfg.dataset.video_repo_id, list):
+                repo_id2 = []
+                for a_repo_id in cfg.dataset.video_repo_id:
+                    repo_id2 += glob.glob(video_a_repo_id)
+                cfg.dataset.video_repo_id = ",".join(repo_id2)
+            
             dataset = MultiVideoDataset(
                 cfg.dataset.video_repo,
                 transform=image_transforms,

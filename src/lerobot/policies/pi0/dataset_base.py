@@ -343,6 +343,31 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         self.action_gen = action_gen
         self.action_horizon = action_horizon
 
+    def sort_keys(self,sample_keys):
+        ## order: wrist first, head second, 3rd view(images) last; left first, right second
+        sorted_sample_keys = []
+        for key in sample_keys:
+            if "left" in key and "wrist" in key:
+                sorted_sample_keys.append(key)
+        for key in sample_keys:
+            if "right" in key and "wrist" in key:
+                sorted_sample_keys.append(key)
+        for key in sample_keys:
+            if "left" in key and "head" in key:
+                sorted_sample_keys.append(key)
+        for key in sample_keys:
+            if "right" in key and "head" in key:
+                sorted_sample_keys.append(key)
+        for key in sample_keys:
+            if "images" in key and "wrist" not in key and "head" not in key:
+                sorted_sample_keys.append(key)
+ 
+        for key in sample_keys:
+            if key not in sorted_sample_keys:
+                sorted_sample_keys.append(key)
+        return sorted_sample_keys
+          
+
     def __call__(self, sample):
         batch_size = len(sample['task'])
         datas = []
@@ -350,7 +375,9 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             # observation_images = []
             data = self._init_data()
             ## For action generation 
-            for key in sorted(sample.keys(), reverse=True):
+            sample_keys = list(sample.keys())
+            sorted_sample_keys = self.sort_keys(sample_keys)
+            for key in sorted_sample_keys:
                 if "images." in key and "observation" in key:
                     image = sample[key][batch_idx]
                     data = self._add_image(
@@ -362,7 +389,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     )
             ## For VQA images
             image_cnt = 0
-            for key in sorted(sample.keys()):
+            for key in sorted_sample_keys:
                 if "images" in key and "vqa" in key:
                     image_cnt += 1
             for image_idx in range(image_cnt):
@@ -376,7 +403,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     need_vit=True,
                 )
             ## For actionless video
-            for key in sample.keys():
+            for key in sorted_sample_keys:
                 if "images" in key and "actionless_video" in key:
                     image = sample[key][batch_idx]
                     data = self._add_image(
@@ -388,7 +415,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     )
 
             instruction = sample['task'][batch_idx]
-            if "action" in sample.keys():
+            if "action" in sorted_sample_keys:
                 instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
                 data = self._add_text(data, instruction, need_loss=False)
             else:
@@ -405,13 +432,13 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
 
             ## For action generation
             next_images = []
-            for key in sorted(sample.keys(), reverse=True):
+            for key in sorted_sample_keys:
                 if "images." in key and "next" in key:
                     next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
             next_img_num = len(next_images)
             if self.visual_gen:
                 if len(next_images) > 0:
-                    next_images = next_images[-1]
+                    next_images = next_images[-1] ## TODO: select only one image for now
                     data = self._add_image(
                         data, 
                         pil_img2rgb(Image.fromarray(next_images)),
