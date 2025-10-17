@@ -697,7 +697,6 @@ class PI0Policy(PreTrainedPolicy):
         if ACTION in batch.keys():
             actions = batch[ACTION]
             act_ids = self.tokenize_action(actions)
-            import ipdb;ipdb.set_trace()
             batch['action'] = act_ids
         datas = self.dataset(batch)
         data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()

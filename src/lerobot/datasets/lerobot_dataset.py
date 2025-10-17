@@ -463,7 +463,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.image_writer = None
         self.episode_buffer = None
 
-        self.root.mkdir(exist_ok=True, parents=True)
+        # self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
