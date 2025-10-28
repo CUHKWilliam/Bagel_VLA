@@ -113,7 +113,9 @@ question_templates = [
 ]
 class VideoDataset(torch.utils.data.Dataset):
     weight = 1.0
+    ds_type = "video"
     def __init__(self, repo_id, transform):
+        self.repo_id = repo_id
         self.root_path = repo_id
         data = []
         self.num_episodes = 0

@@ -330,7 +330,7 @@ class LeRobotDatasetMetadata:
 
 class LeRobotDataset(torch.utils.data.Dataset):
     weight = 1.0
-
+    ds_type = "action"
     def __init__(
         self,
         repo_id: str,

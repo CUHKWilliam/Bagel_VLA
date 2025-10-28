@@ -159,7 +159,7 @@ def train(cfg: TrainPipelineConfig):
     # Create dataset
     if accelerator.is_main_process:
         logging.info("Creating dataset")
-    dataset, sample_weights = make_dataset(cfg)
+    dataset, train_sample_weights, val_sample_weights_dict = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -226,15 +226,14 @@ def train(cfg: TrainPipelineConfig):
     else:
         shuffle = True
         sampler = None
-    sampler = torch.utils.data.WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights))
-
+    train_sampler = torch.utils.data.WeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights))
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=0, # cfg.num_workers, ## TODO: set worker
         batch_size=cfg.batch_size,
         # shuffle=shuffle,
-        sampler=sampler,
+        sampler=train_sampler,
         pin_memory=False,
         drop_last=False,
     )
@@ -271,7 +270,7 @@ def train(cfg: TrainPipelineConfig):
         logging.info("============ Dataset Recipe =================")
         for dataset_idx in range(num_datasets):
             ds = dataset.datasets[dataset_idx]
-            logging.info(f"{ds.repo_id=}: {ds.num_frames=} ({format_big_number(ds.num_frames)}) {ds.num_episodes=} ({format_big_number(ds.num_episodes)}) {ds.weight=}")
+            logging.info(f"{ds.repo_id=}: {ds.num_frames=} ({format_big_number(ds.num_frames)}) {ds.num_episodes=} ({format_big_number(ds.num_episodes)}) {ds.weight=} {ds.ds_type=}")
         logging.info("============ Dataset Recipe End =================")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
@@ -362,40 +361,53 @@ def train(cfg: TrainPipelineConfig):
             # unwrapped_policy.eval()
             
             ## TODO: validation
-            print("validation begins")
-            dl_iter_val = iter(dataloader)
-            val_total_steps = 10 ## TODO:
-            all_loss_values = torch.tensor(0.).float().cuda()
-            all_mse_values = torch.tensor(0.).float().cuda()
-            all_ce_values = torch.tensor(0.).float().cuda()
-            for val_step in tqdm(range(val_total_steps)):
-                batch = next(dl_iter)
-                dl_iter = iter(dataloader)
-                batch = next(dl_iter)          
-                with torch.no_grad():
-                    loss, output_dict = policy.forward(batch)
-                loss_value = loss.detach().mean()
-                mse = output_dict['mse']
-                ce = output_dict['ce']
-                all_loss_values += loss_value / val_total_steps
-                all_mse_values += mse / val_total_steps
-                all_ce_values += ce / val_total_steps
+            logging.info("validation begins")
+            ds_types = val_sample_weights_dict.keys()
+            val_loss_dict = {}
+            for ds_type in ds_types:
+                dl_iter_val = iter(dataloader)
+                val_total_steps = cfg.val_sample_num ## TODO:
+                all_loss_values = torch.tensor(0.).float().cuda()
+                all_mse_values = torch.tensor(0.).float().cuda()
+                all_ce_values = torch.tensor(0.).float().cuda()
+                val_sampler = torch.utils.data.WeightedRandomSampler(weights=val_sample_weights_dict[ds_type], num_samples=len(train_sample_weights))
+                dataloader = torch.utils.data.DataLoader(
+                    dataset,
+                    num_workers=0, # cfg.num_workers, ## TODO: set worker
+                    batch_size=1,
+                    sampler=val_sampler,
+                    pin_memory=False,
+                    drop_last=False,
+                )
+                for val_step in tqdm(range(val_total_steps)):
+                    batch = next(dl_iter)
+                    dl_iter = iter(dataloader)
+                    batch = next(dl_iter)          
+                    with torch.no_grad():
+                        loss, output_dict = policy.forward(batch)
+                    loss_value = loss.detach().mean()
+                    mse = output_dict['mse']
+                    ce = output_dict['ce']
+                    all_loss_values += loss_value / val_total_steps
+                    all_mse_values += mse / val_total_steps
+                    all_ce_values += ce / val_total_steps
 
-            mse_loss_value = accelerator.gather(all_mse_values.detach()).mean().item()
-            ce_loss_value = accelerator.gather(all_ce_values.detach()).mean().item()
-            loss_value = accelerator.gather(all_loss_values.detach()).mean().item()
-            validation_metrics = {
-                "loss": AverageMeter("loss", ":3f"),
-                "ce": AverageMeter("ce", ":.3f"),
-                "mse": AverageMeter("mse", ":.3f"),
-            }
+                mse_loss_value = accelerator.gather(all_mse_values.detach()).mean().item()
+                ce_loss_value = accelerator.gather(all_ce_values.detach()).mean().item()
+                loss_value = accelerator.gather(all_loss_values.detach()).mean().item()
+                validation_metrics = {
+                    f"{ds_type}_loss": AverageMeter("loss", ":3f"),
+                    f"{ds_type}_ce": AverageMeter("ce", ":.3f"),
+                    f"{ds_type}_mse": AverageMeter("mse", ":.3f"),
+                }
+                val_loss_dict[f'{ds_type}_loss'] = mse_loss_value
+                val_loss_dict[f'{ds_type}_ce'] = ce_loss_value
+                val_loss_dict[f'{ds_type}_mse'] = loss_value
             validation_tracker = MetricsTracker(
-                cfg.batch_size, dataset.num_frames, dataset.num_episodes, validation_metrics,
+                1, dataset.num_frames, dataset.num_episodes, validation_metrics,
             )
-
-            validation_tracker.loss = loss.item()
-            validation_tracker.ce = ce.item()
-            validation_tracker.mse = mse.item()
+            for val_loss_key in val_loss_dict:
+                setattr(validation_tracker, val_loss_key, val_loss_dict[val_loss_key].item())
             print("validation end")
             val_tracker_dict = validation_tracker.to_dict() 
             wandb_log_dict = {**val_tracker_dict}

@@ -138,7 +138,9 @@ question_templates = [
 ]
 class VQADataset(torch.utils.data.Dataset):
     weight = 1.0
+    ds_type = "vqa"
     def __init__(self, repo_id, transform):
+        self.repo_id = repo_id
         self.root_path = repo_id
         data = None
         self.num_episodes = 0
