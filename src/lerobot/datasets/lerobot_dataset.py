@@ -329,6 +329,8 @@ class LeRobotDatasetMetadata:
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
+    weight = 1.0
+
     def __init__(
         self,
         repo_id: str,
@@ -463,7 +465,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.image_writer = None
         self.episode_buffer = None
 
-        # self.root.mkdir(exist_ok=True, parents=True)
+        self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
@@ -1161,6 +1163,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # restriction in future iterations of this class. For now, this is necessary at least for being able
         # to use PyTorch's default DataLoader collate function.
         self.disabled_features = set()
+        '''
         intersection_features = set(self._datasets[0].features)
         for ds in self._datasets:
             intersection_features.intersection_update(ds.features)
@@ -1176,6 +1179,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 "other datasets."
             )
             self.disabled_features.update(extra_keys)
+        '''
 
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps

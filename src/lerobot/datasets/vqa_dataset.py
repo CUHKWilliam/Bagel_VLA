@@ -137,6 +137,7 @@ question_templates = [
     "What's the photographic representation?"
 ]
 class VQADataset(torch.utils.data.Dataset):
+    weight = 1.0
     def __init__(self, repo_id, transform):
         self.root_path = repo_id
         data = None

@@ -37,6 +37,7 @@ from lerobot.datasets.video_dataset import (
     MultiVideoDataset,
 )
 import glob
+import numpy as np
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -119,8 +120,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             elif isinstance(cfg.dataset.repo_id, list):
                 repo_id2 = []
                 for a_repo_id in cfg.dataset.repo_id:
-                    repo_id2 += glob.glob(a_repo_id)
-                cfg.dataset.repo_id = ",".join(repo_id22)
+                    if "*" in a_repo_id:
+                        repo_id2 += glob.glob(a_repo_id)
+                    else:
+                        repo_id2.append(a_repo_id)
+                cfg.dataset.repo_id = repo_id2
             dataset = MultiLeRobotDataset(
                 cfg.dataset.repo_id,
                 # TODO(aliberts): add proper support for multi dataset
@@ -158,7 +162,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 repo_id2 = []
                 for a_repo_id in cfg.dataset.vqa_repo_id:
                     repo_id2 += glob.glob(a_repo_id)
-                cfg.dataset.vqa_repo_id = ",".join(repo_id22)
+                cfg.dataset.vqa_repo_id = repo_id2
             
             dataset = MultiVQADataset(
                 cfg.dataset.vqa_repo,
@@ -180,7 +184,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 repo_id2 = []
                 for a_repo_id in cfg.dataset.video_repo_id:
                     repo_id2 += glob.glob(video_a_repo_id)
-                cfg.dataset.video_repo_id = ",".join(repo_id2)
+                cfg.dataset.video_repo_id = repo_id2
             
             dataset = MultiVideoDataset(
                 cfg.dataset.video_repo,
@@ -196,4 +200,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     dataset = torch.utils.data.ConcatDataset(all_datasets)
     dataset.num_frames = num_frames
     dataset.num_episodes = num_episodes
-    return dataset
+    sample_weights = []
+    for a_dataset in dataset.datasets:
+        sample_weights += [a_dataset.weight] * a_dataset.__len__()
+    sample_weights = np.array(sample_weights)
+    return dataset, sample_weights

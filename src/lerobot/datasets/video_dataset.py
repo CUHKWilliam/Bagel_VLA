@@ -112,6 +112,7 @@ question_templates = [
     "Context: {}. Envision the subsequent visual"
 ]
 class VideoDataset(torch.utils.data.Dataset):
+    weight = 1.0
     def __init__(self, repo_id, transform):
         self.root_path = repo_id
         data = []

@@ -17,7 +17,7 @@
 # import swanlab
 # swanlab.sync_wandb()
 
-
+from tqdm import tqdm
 import logging
 import time
 from contextlib import nullcontext
@@ -61,6 +61,7 @@ import os
 import numpy as np
 import cv2
 from lerobot.configs.train import TrainPipelineConfig
+from torch.utils.data import WeightedRandomSampler
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -158,14 +159,14 @@ def train(cfg: TrainPipelineConfig):
     # Create dataset
     if accelerator.is_main_process:
         logging.info("Creating dataset")
-    dataset = make_dataset(cfg)
+    dataset, sample_weights = make_dataset(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_envs = None
-    cfg.eval_freq = 0 ## TODO:
-    if cfg.eval_freq > 0: ## TODO:
+    if False:
+    # if cfg.eval_freq > 0: ## TODO:
         logging.info("Creating libero env")
         from libero.libero import benchmark
         from libero.libero.envs import OffScreenRenderEnv
@@ -225,12 +226,14 @@ def train(cfg: TrainPipelineConfig):
     else:
         shuffle = True
         sampler = None
+    sampler = torch.utils.data.WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights))
+
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=0, # cfg.num_workers, ## TODO: set worker
         batch_size=cfg.batch_size,
-        shuffle=shuffle,
+        # shuffle=shuffle,
         sampler=sampler,
         pin_memory=False,
         drop_last=False,
@@ -264,8 +267,12 @@ def train(cfg: TrainPipelineConfig):
         if cfg.env is not None:
             logging.info(f"{cfg.env.task=}")
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
-        logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
-        logging.info(f"{dataset.num_episodes=}")
+        num_datasets = len(dataset.datasets)
+        logging.info("============ Dataset Recipe =================")
+        for dataset_idx in range(num_datasets):
+            ds = dataset.datasets[dataset_idx]
+            logging.info(f"{ds.repo_id=}: {ds.num_frames=} ({format_big_number(ds.num_frames)}) {ds.num_episodes=} ({format_big_number(ds.num_episodes)}) {ds.weight=}")
+        logging.info("============ Dataset Recipe End =================")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
         logging.info(f"Number of processes: {accelerator.num_processes}")
@@ -281,9 +288,8 @@ def train(cfg: TrainPipelineConfig):
         "update_s": AverageMeter("updt_s", ":.3f"),
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
-
     train_tracker = MetricsTracker(
-        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
+        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, 
     )
     policy.train()
     if accelerator.is_main_process:
@@ -315,7 +321,6 @@ def train(cfg: TrainPipelineConfig):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
-
         if is_log_step and accelerator.is_main_process:
             print("logging.....")
             logging.info(train_tracker)
@@ -325,7 +330,7 @@ def train(cfg: TrainPipelineConfig):
                 for key in batch.keys():
                     if "images." in key and "observation" in key:
                         observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
-                observation_image = cv2.hconcat(observation_images)
+                # observation_image = cv2.hconcat(observation_images)
                 # wandb_log_dict.update({"observation": [observation_image]})
                 # predict_action = str(output_dict['predict_action'].view(-1).tolist())
                 # gt_action = str(output_dict['gt_action'].tolist())
@@ -353,23 +358,54 @@ def train(cfg: TrainPipelineConfig):
             logging.info(f"Eval policy at step {step}")
 
             # Unwrap model for evaluation
-            unwrapped_policy = accelerator.unwrap_model(policy)
-            unwrapped_policy.eval()
+            # unwrapped_policy = accelerator.unwrap_model(policy)
+            # unwrapped_policy.eval()
             
             ## TODO: validation
             print("validation begins")
             dl_iter_val = iter(dataloader)
-            val_total_steps = 1
-            for val_step in range(val_total_steps):
+            val_total_steps = 10 ## TODO:
+            all_loss_values = torch.tensor(0.).float().cuda()
+            all_mse_values = torch.tensor(0.).float().cuda()
+            all_ce_values = torch.tensor(0.).float().cuda()
+            for val_step in tqdm(range(val_total_steps)):
                 batch = next(dl_iter)
                 dl_iter = iter(dataloader)
                 batch = next(dl_iter)          
                 with torch.no_grad():
-                    val_info = validate_policy(
-                        unwrapped_policy,
-                        batch
-                    )
+                    loss, output_dict = policy.forward(batch)
+                loss_value = loss.detach().mean()
+                mse = output_dict['mse']
+                ce = output_dict['ce']
+                all_loss_values += loss_value / val_total_steps
+                all_mse_values += mse / val_total_steps
+                all_ce_values += ce / val_total_steps
+
+            mse_loss_value = accelerator.gather(all_mse_values.detach()).mean().item()
+            ce_loss_value = accelerator.gather(all_ce_values.detach()).mean().item()
+            loss_value = accelerator.gather(all_loss_values.detach()).mean().item()
+            validation_metrics = {
+                "loss": AverageMeter("loss", ":3f"),
+                "ce": AverageMeter("ce", ":.3f"),
+                "mse": AverageMeter("mse", ":.3f"),
+            }
+            validation_tracker = MetricsTracker(
+                cfg.batch_size, dataset.num_frames, dataset.num_episodes, validation_metrics,
+            )
+
+            validation_tracker.loss = loss.item()
+            validation_tracker.ce = ce.item()
+            validation_tracker.mse = mse.item()
             print("validation end")
+            val_tracker_dict = validation_tracker.to_dict() 
+            wandb_log_dict = {**val_tracker_dict}
+            for k, v in wandb_log_dict.items():
+                accelerator.log({f"{'validation'}/{k}": v}, step=step)
+            if wandb_logger:
+                wandb_logger.log_dict(wandb_log_dict, step, mode="validation")
+
+
+        if False:
             process_index = accelerator.process_index
             num_processes = accelerator.num_processes
             local_eval_envs = eval_envs[accelerator.process_index::accelerator.num_processes] if accelerator.process_index in list(range(len(eval_envs))) else None
@@ -413,11 +449,6 @@ def train(cfg: TrainPipelineConfig):
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
             # Set back to training mode
             print("eval log dict done")
-            if accelerator.is_main_process:
-                import ipdb;ipdb.set_trace()
-            else:
-                while True:
-                    pass
             policy.train()
     # Wait for all processes to finish
     accelerator.wait_for_everyone()
