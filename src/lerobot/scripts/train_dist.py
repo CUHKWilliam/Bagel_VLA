@@ -364,6 +364,7 @@ def train(cfg: TrainPipelineConfig):
             logging.info("validation begins")
             ds_types = val_sample_weights_dict.keys()
             val_loss_dict = {}
+            validation_metrics = {}
             for ds_type in ds_types:
                 dl_iter_val = iter(dataloader)
                 val_total_steps = cfg.val_sample_num ## TODO:
@@ -395,11 +396,11 @@ def train(cfg: TrainPipelineConfig):
                 mse_loss_value = accelerator.gather(all_mse_values.detach()).mean().item()
                 ce_loss_value = accelerator.gather(all_ce_values.detach()).mean().item()
                 loss_value = accelerator.gather(all_loss_values.detach()).mean().item()
-                validation_metrics = {
+                validation_metrics.update({
                     f"{ds_type}_loss": AverageMeter("loss", ":3f"),
                     f"{ds_type}_ce": AverageMeter("ce", ":.3f"),
                     f"{ds_type}_mse": AverageMeter("mse", ":.3f"),
-                }
+                })
                 val_loss_dict[f'{ds_type}_loss'] = mse_loss_value
                 val_loss_dict[f'{ds_type}_ce'] = ce_loss_value
                 val_loss_dict[f'{ds_type}_mse'] = loss_value
@@ -407,7 +408,7 @@ def train(cfg: TrainPipelineConfig):
                 1, dataset.num_frames, dataset.num_episodes, validation_metrics,
             )
             for val_loss_key in val_loss_dict:
-                setattr(validation_tracker, val_loss_key, val_loss_dict[val_loss_key].item())
+                setattr(validation_tracker, val_loss_key, val_loss_dict[val_loss_key])
             print("validation end")
             val_tracker_dict = validation_tracker.to_dict() 
             wandb_log_dict = {**val_tracker_dict}

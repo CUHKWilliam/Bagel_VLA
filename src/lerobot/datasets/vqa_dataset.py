@@ -192,11 +192,11 @@ class VQADataset(torch.utils.data.Dataset):
             image_dir = os.path.join(self.root_path, "images")
             os.makedirs(image_dir, exist_ok=True)
             image_path = os.path.join(image_dir, "{}.jpeg")
-            if os.path.exists(image_path):
-                image = np.fromarray(Image.open(image_path))
-            else:
+            # if os.path.exists(image_path):
+            image = np.fromarray(Image.open(image_path).convert("RGB"))
+            # else:
                 ## TODO: for debug
-                image = np.zeros((100, 100, 3)).astype(np.uint8)
+                # image = np.zeros((100, 100, 3)).astype(np.uint8)
             images = [image]
             desc = a_vqa_data['capsfusion']
             convs = [
@@ -205,7 +205,7 @@ class VQADataset(torch.utils.data.Dataset):
                     ]
         elif isinstance(a_vqa_data, dict) and 'image' in a_vqa_data.keys() and 'bytes' in a_vqa_data['image']:
             ## robo2vlm
-            image = np.asarray(Image.open(io.BytesIO(a_vqa_data['image']['bytes'])))
+            image = np.asarray(Image.open(io.BytesIO(a_vqa_data['image']['bytes'])).convert("RGB"))
             images = [image]
             choices_text = a_vqa_data['choices']
             ans = eval(choices_text)[a_vqa_data['correct_answer']]
@@ -217,8 +217,8 @@ class VQADataset(torch.utils.data.Dataset):
             ## cambrian
             a_vqa_data = json.loads(a_vqa_data)
             if 'image' in a_vqa_data.keys() and a_vqa_data['image'] != "" and a_vqa_data['image'] is not None:
-                image_path = os.path.join(a_vqa_data['image'], self.root_path)
-                image = np.asarray(Image.open(image_path))
+                image_path = os.path.join(self.root_path, a_vqa_data['image'])
+                image = np.asarray(Image.open(image_path).convert("RGB"))
                 images = [image]
                 # images = []
             else:
