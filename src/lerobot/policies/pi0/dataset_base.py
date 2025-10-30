@@ -377,6 +377,37 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             ## For action generation 
             sample_keys = list(sample.keys())
             sorted_sample_keys = self.sort_keys(sample_keys)
+
+            ## For in-context reference (image1, action , image2)-pair
+            for key in sorted_sampe_keys:
+                if "ref." in key and "observation" in key:
+                    import ipdb;ipdb.set_trace()
+                    ref_action = sample['ref_action'][batch_idx]
+                    for i in range(len(ref_action)):
+                        a_ref_action = ref_action[i].unsqueeze(0)
+                        current_image = sample[key][batch_idx][i] 
+                        next_image = sample[key][batch_idx][i + 1]
+                        data = self._add_image(
+                            data,
+                            pil_img2rgb(Image.fromarray((current_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                            need_loss=False,
+                            need_vae=False,
+                            need_vit=True,
+                        )
+                        data = self._add_action(
+                            data,
+                            actions,
+                            need_loss=False,
+                        )
+                        data = self._add_image(
+                            data,
+                            pil_img2rgb(Image.fromarray((next_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                            need_loss=False,
+                            need_vae=False,
+                            need_vit=True,
+                        )
+
+
             for key in sorted_sample_keys:
                 if "images." in key and "observation" in key:
                     image = sample[key][batch_idx]
@@ -430,7 +461,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     else:
                         raise NotImplementedError
 
-            ## For action generation
+            ## For goal image generation
             next_images = []
             for key in sorted_sample_keys:
                 if "images." in key and "next" in key:
@@ -446,6 +477,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                         need_vae=False, 
                         need_vit=True, 
                     )
+            ## For action generation
             if self.action_gen:
                 if ACTION in sample.keys():
                     actions = sample[ACTION][batch_idx]

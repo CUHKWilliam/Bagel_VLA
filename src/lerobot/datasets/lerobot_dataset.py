@@ -605,7 +605,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
             hf_dataset = load_dataset("parquet", data_files=files, split="train")
-
         # TODO(aliberts): hf_dataset.set_format("torch")
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
@@ -646,19 +645,27 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             return get_hf_features_from_features(self.features)
 
-    def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
+    def _get_query_indices(self, idx: int, ep_idx: int, with_ref:bool = True) -> tuple[dict[str, list[int | bool]]]:
         ep_start = self.episode_data_index["from"][ep_idx]
         ep_end = self.episode_data_index["to"][ep_idx]
         query_indices = {
             key: [max(ep_start.item(), min(ep_end.item() - 1, idx + delta)) for delta in delta_idx]
             for key, delta_idx in self.delta_indices.items()
         }
+        if with_ref:
+            ref_num = np.random.randint(low=1, high=2)
+            ref_num_start = np.random.randint(low=ep_start, high=ep_end - ref_num - 1) 
+            for key in query_indices:
+                query_indices[key] = [i for i in range(ref_num_start, ref_num_start + ref_num)] + query_indices[key]
+
         padding = {  # Pad values outside of current episode range
             f"{key}_is_pad": torch.BoolTensor(
                 [(idx + delta < ep_start.item()) | (idx + delta >= ep_end.item()) for delta in delta_idx]
             )
             for key, delta_idx in self.delta_indices.items()
         }
+        if with_ref:
+            return query_indices, padding, ref_num
         return query_indices, padding
 
     def _get_query_timestamps(
@@ -711,7 +718,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         query_indices = None
         if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(idx, ep_idx)
+            query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=True)
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
             for key, val in query_result.items():
@@ -725,7 +732,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action
-
+        
+        item['ref_action'] = item['action'][:ref_num]
+        item['action'] = item['action'][ref_num:]
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             video_keys = self.meta.video_keys
@@ -734,22 +743,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     query_indices[k] = query_indices['action']
                 elif 'action.left_gripper' in query_indices.keys():
                     query_indices[k] = query_indices['action.left_gripper']
+            
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
             current_video_frames = {}
             next_video_frames = {}
+            ref_video_frames = {}
             for k in video_frames.keys():
-                next_video_frames[f"next.{k.replace('observation.', '')}"] = video_frames[k]
-                next_video_frames[f"next.{k.replace('observation.', '')}"] = next_video_frames[f"next.{k.replace('observation.', '')}"][-1]
-                current_video_frames[k] = video_frames[k]
-                current_video_frames[k] = current_video_frames[k][0]
-            item = {**current_video_frames, **item, **next_video_frames}
+                next_video_frames[f"next.{k.replace('observation.', '')}"] = video_frames[k][-1]
+                current_video_frames[k] = video_frames[k][ref_num]
+                ref_video_frames[f"ref.{k.replace('observation.', '')}"] = video_frames[k][:ref_num]
 
+            item = {**current_video_frames, **item, **next_video_frames, **ref_video_frames}
+        
+        
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
-
+        
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]

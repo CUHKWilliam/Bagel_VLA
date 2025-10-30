@@ -698,6 +698,10 @@ class PI0Policy(PreTrainedPolicy):
             actions = batch[ACTION]
             act_ids = self.tokenize_action(actions)
             batch['action'] = act_ids
+        if "ref_action" in batch.keys():
+            ref_actions = batch['ref_action']:
+            ref_act_ids = self.tokenizer_action(actions)
+            batch['ref_action'] = ref_act_ids
         datas = self.dataset(batch)
         data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
         data_batch = autocast(data_batch, torch.float32, self.dtype)

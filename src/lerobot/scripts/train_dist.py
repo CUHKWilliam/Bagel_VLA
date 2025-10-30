@@ -65,6 +65,20 @@ from torch.utils.data import WeightedRandomSampler
 import pickle
 
 
+class CustomWeightedRandomSampler(WeightedRandomSampler):
+    """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __iter__(self):
+        rand_tensor = np.random.choice(range(0, len(self.weights)),
+                                       size=self.num_samples,
+                                       p=self.weights.numpy() / torch.sum(self.weights).numpy(),
+                                       replace=self.replacement)
+        rand_tensor = torch.from_numpy(rand_tensor)
+        return iter(rand_tensor.tolist())
+
+
 def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
@@ -237,7 +251,7 @@ def train(cfg: TrainPipelineConfig):
     else:
         shuffle = True
         sampler = None
-    train_sampler = torch.utils.data.WeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights))
+    train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights))
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
