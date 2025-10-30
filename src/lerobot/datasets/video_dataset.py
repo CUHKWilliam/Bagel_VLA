@@ -182,6 +182,7 @@ class VideoDataset(torch.utils.data.Dataset):
     
 
 class MultiVideoDataset(torch.utils.data.Dataset):
+    weight = 1.0
     def __init__(self, repo_ids, transform):
         data = []
         root_paths = []

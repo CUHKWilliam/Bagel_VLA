@@ -1127,7 +1127,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     The underlying `LeRobotDataset`s are effectively concatenated, and this class adopts much of the API
     structure of `LeRobotDataset`.
     """
-
+    weight = 1.0
     def __init__(
         self,
         repo_ids: list[str],

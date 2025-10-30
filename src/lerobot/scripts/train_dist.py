@@ -62,6 +62,8 @@ import numpy as np
 import cv2
 from lerobot.configs.train import TrainPipelineConfig
 from torch.utils.data import WeightedRandomSampler
+import pickle
+
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -74,11 +76,14 @@ def update_policy(
     device = get_device_from_parameters(policy)
 
     policy.train()
+    print('debug a')
     loss, output_dict = policy.forward(batch)
     # policy.select_action(batch)
+    print('debug b')
     policy.backward(loss)
+    print('debug c')
     policy.step()
-    
+    import ipdb;ipdb.set_trace()
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
     mse = output_dict['mse']
@@ -160,7 +165,13 @@ def train(cfg: TrainPipelineConfig):
     if accelerator.is_main_process:
         logging.info("Creating dataset")
     dataset, train_sample_weights, val_sample_weights_dict = make_dataset(cfg)
-
+    sample_weights_cache_path = os.path.join(cfg.output_dir, "sample_weights_cache.pkl")
+    if not os.path.exists(sample_weights_cache_path):
+        if accelerator.is_main_process:
+            pickle.dump([train_sample_weights, val_sample_weights_dict],open(sample_weights_cache_path, 'wb'))
+        accelerator.wait_for_everyone()
+        torch.cuda.synchronize()
+    train_sample_weights, val_sample_weights_dict = pickle.load(open(sample_weights_cache_path, "rb"))
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -295,7 +306,6 @@ def train(cfg: TrainPipelineConfig):
         logging.info("Start offline training on a fixed dataset")
     # Create iterator from dataloader
     dl_iter = iter(dataloader)
-
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         # Get next batch, cycling through dataloader if needed
@@ -412,10 +422,12 @@ def train(cfg: TrainPipelineConfig):
             print("validation end")
             val_tracker_dict = validation_tracker.to_dict() 
             wandb_log_dict = {**val_tracker_dict}
-            for k, v in wandb_log_dict.items():
-                accelerator.log({f"{'validation'}/{k}": v}, step=step)
-            if wandb_logger:
-                wandb_logger.log_dict(wandb_log_dict, step, mode="validation")
+            if accelerator.is_main_process:
+                for k, v in wandb_log_dict.items():
+                    accelerator.log({f"{'validation'}/{k}": v}, step=step)
+            
+                if wandb_logger:
+                    wandb_logger.log_dict(wandb_log_dict, step, mode="validation")
 
 
         if False:

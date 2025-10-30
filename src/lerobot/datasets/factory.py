@@ -204,25 +204,21 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     dataset.num_frames = num_frames
     dataset.num_episodes = num_episodes
     sample_weights_cache_path = os.path.join(cfg.output_dir, "sample_weights_cache.pkl")
-    if os.path.exists(sample_weights_cache_path):
-        sample_weights, val_sample_weights_dict = pickle.load(open(sample_weights_cache_path, "rb"))
-    else:
-        val_sample_weights_dict = {}
-        dataset_types = []
-        sample_weights = []
-        for a_dataset in dataset.datasets:
-            sample_weights += [a_dataset.weight] * a_dataset.__len__()
-            dataset_types += [a_dataset.ds_type] * a_dataset.__len__()
-        sample_weights = np.array(sample_weights)
-        dataset_types = np.array(dataset_types)
-        all_dataset_types = np.unique(dataset_types)
-        train_sample_weights = copy.deepcopy(sample_weights)
-        for dataset_type in all_dataset_types:
-            data_idx_same_t = np.where(dataset_types == dataset_type)[0]
-            val_data_idx_same_t = np.random.choice(data_idx_same_t, size=cfg.val_sample_num)
-            val_sample_weights_dict[dataset_type] = np.zeros_like(sample_weights)
-            val_sample_weights_dict[dataset_type][val_data_idx_same_t] = train_sample_weights[val_data_idx_same_t]
-            train_sample_weights[val_data_idx_same_t] = 0.0
-        train_sample_weights = np.array(train_sample_weights)
-        pickle.dump([sample_weights, val_sample_weights_dict],open(sample_weights_cache_path, 'wb'))
+    val_sample_weights_dict = {}
+    dataset_types = []
+    sample_weights = []
+    for a_dataset in dataset.datasets:
+        sample_weights += [a_dataset.weight] * a_dataset.__len__()
+        dataset_types += [a_dataset.ds_type] * a_dataset.__len__()
+    sample_weights = np.array(sample_weights)
+    dataset_types = np.array(dataset_types)
+    all_dataset_types = np.unique(dataset_types)
+    train_sample_weights = copy.deepcopy(sample_weights)
+    for dataset_type in all_dataset_types:
+        data_idx_same_t = np.where(dataset_types == dataset_type)[0]
+        val_data_idx_same_t = np.random.choice(data_idx_same_t, size=cfg.val_sample_num)
+        val_sample_weights_dict[dataset_type] = np.zeros_like(sample_weights)
+        val_sample_weights_dict[dataset_type][val_data_idx_same_t] = train_sample_weights[val_data_idx_same_t]
+        train_sample_weights[val_data_idx_same_t] = 0.0
+    train_sample_weights = np.array(train_sample_weights)
     return dataset, sample_weights, val_sample_weights_dict
