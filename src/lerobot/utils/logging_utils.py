@@ -76,7 +76,6 @@ class MetricsTracker:
     """
 
     __keys__ = [
-        "_batch_size",
         "_num_frames",
         "_avg_samples_per_ep",
         "metrics",
@@ -88,24 +87,17 @@ class MetricsTracker:
 
     def __init__(
         self,
-        batch_size: int,
         num_frames: int,
         num_episodes: int,
         metrics: dict[str, AverageMeter],
-        initial_step: int = 0,
+        initial_tokens: int = 0,
+        initial_step: int = 0
     ):
         self.__dict__.update(dict.fromkeys(self.__keys__))
-        self._batch_size = batch_size
         self._num_frames = num_frames
-        self._avg_samples_per_ep = num_frames / num_episodes
         self.metrics = metrics
-
-        self.steps = initial_step
-        # A sample is an (observation,action) pair, where observation and action
-        # can be on multiple timestamps. In a batch, we have `batch_size` number of samples.
-        self.samples = self.steps * self._batch_size
-        self.episodes = self.samples / self._avg_samples_per_ep
-        self.epochs = self.samples / self._num_frames
+        self.tokens = initial_tokens
+        self.step = initial_step
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
         if name in self.__dict__:
@@ -123,24 +115,19 @@ class MetricsTracker:
         else:
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-    def step(self) -> None:
+    def step(self, num_token) -> None:
         """
         Updates metrics that depend on 'step' for one step.
         """
-        self.steps += 1
-        self.samples += self._batch_size
-        self.episodes = self.samples / self._avg_samples_per_ep
-        self.epochs = self.samples / self._num_frames
-
+        self.epochs = self.samples / self._num_frames * self.step
+        self.tokens += num_token
+        self.step += 1
     def __str__(self) -> str:
         display_list = [
             f"step:{format_big_number(self.steps)}",
-            # number of samples seen during training
-            f"smpl:{format_big_number(self.samples)}",
-            # number of episodes seen during training
-            f"ep:{format_big_number(self.episodes)}",
-            # number of time all unique samples are seen
             f"epch:{self.epochs:.2f}",
+            # number of seen training tokens,
+            f"tok:{format_big_number(self.tokens)}"
             *[str(m) for m in self.metrics.values()],
         ]
         return " ".join(display_list)
@@ -151,9 +138,8 @@ class MetricsTracker:
         """
         return {
             "steps": self.steps,
-            "samples": self.samples,
-            "episodes": self.episodes,
             "epochs": self.epochs,
+            "tokens": self.tokens,
             **{k: m.avg if use_avg else m.val for k, m in self.metrics.items()},
         }
 

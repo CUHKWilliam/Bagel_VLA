@@ -268,7 +268,7 @@ def train(cfg: TrainPipelineConfig):
     
     if cfg.resume:
         checkpoint_path = cfg.output_dir / "checkpoints" / "last"
-        step, _, _ = load_training_state(checkpoint_path, None, None)
+        step, tokens, _, _ = load_training_state(checkpoint_path, None, None)
     
     # Prepare for distributed training
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
@@ -309,7 +309,7 @@ def train(cfg: TrainPipelineConfig):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
     train_tracker = MetricsTracker(
-        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, 
+        dataset.num_frames, dataset.num_episodes, train_metrics, 
     )
     policy.train()
     if accelerator.is_main_process:
@@ -332,7 +332,9 @@ def train(cfg: TrainPipelineConfig):
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
-        train_tracker.step()
+        num_tokens = data_batch['sample_len']
+        tokens += num_tokens
+        train_tracker.step(num_tokens)
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
@@ -362,7 +364,7 @@ def train(cfg: TrainPipelineConfig):
             # Unwrap model for saving
             unwrapped_policy = accelerator.unwrap_model(policy)
             if accelerator.is_main_process:
-                save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
+                save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler)
                 update_last_checkpoint(checkpoint_dir)
         
         if cfg.save_checkpoint and is_saving_step:

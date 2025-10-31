@@ -50,13 +50,13 @@ def get_step_checkpoint_dir(output_dir: Path, total_steps: int, step: int) -> Pa
     return output_dir / CHECKPOINTS_DIR / step_identifier
 
 
-def save_training_step(step: int, save_dir: Path) -> None:
-    write_json({"step": step}, save_dir / TRAINING_STEP)
+def save_training_step(step: int, tokens: int, save_dir: Path) -> None:
+    write_json({"step": step, "tokens": tokens}, save_dir / TRAINING_STEP)
 
 
 def load_training_step(save_dir: Path) -> int:
     training_step = load_json(save_dir / TRAINING_STEP)
-    return training_step["step"]
+    return training_step["step"], trainng_step['tokens']
 
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
@@ -70,6 +70,7 @@ def update_last_checkpoint(checkpoint_dir: Path) -> Path:
 def save_checkpoint(
     checkpoint_dir: Path,
     step: int,
+    tokens: int,
     cfg: TrainPipelineConfig,
     policy: PreTrainedPolicy,
     optimizer: Optimizer,
@@ -99,12 +100,13 @@ def save_checkpoint(
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
-    save_training_state(checkpoint_dir, step, optimizer, scheduler)
+    save_training_state(checkpoint_dir, step, tokens, optimizer, scheduler)
 
 
 def save_training_state(
     checkpoint_dir: Path,
     train_step: int,
+    tokens: int,
     optimizer: Optimizer | None = None,
     scheduler: LRScheduler | None = None,
 ) -> None:
@@ -121,7 +123,7 @@ def save_training_state(
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
-    save_training_step(train_step, save_dir)
+    save_training_step(train_step, tokens, save_dir)
     save_rng_state(save_dir)
     if optimizer is not None:
         save_optimizer_state(optimizer, save_dir)
@@ -153,7 +155,7 @@ def load_training_state(
         raise NotADirectoryError(training_state_dir)
 
     load_rng_state(training_state_dir)
-    step = load_training_step(training_state_dir)
+    step, tokens = load_training_step(training_state_dir)
     try:
         optimizer = load_optimizer_state(optimizer, training_state_dir)
     except:
@@ -164,4 +166,4 @@ def load_training_state(
         except:
             print('scheduler load fail')
 
-    return step, optimizer, scheduler
+    return step, tokens, optimizer, scheduler
