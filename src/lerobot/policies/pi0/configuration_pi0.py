@@ -42,6 +42,7 @@ class PI0Config(PreTrainedConfig):
     # Shorter state and action vectors will be padded
     max_state_dim: int = 32
     max_action_dim: int = 32
+    use_ref: bool = True
 
     # Image preprocessing
     resize_imgs_with_padding: tuple[int, int] = (224, 224)

@@ -120,12 +120,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=3000,
+        default=12000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=6500,
+        default=35000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -526,6 +526,7 @@ class PI0Policy(PreTrainedPolicy):
             if hasattr(self.model.tokenizer, "pad_token_id")
             else self.model.tokenizer.eos_token_id
         )
+        self.use_ref = config.use_ref
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -688,20 +689,8 @@ class PI0Policy(PreTrainedPolicy):
         return act_ids
 
 
-    def prepare_inputs(self, batch):
+    def prepare_inputs(self, data_batch):
         self.dtype = self.model.state_proj.weight.dtype
-        if self.config.adapt_to_pi_aloha:
-            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
-            if ACTION in batch.keys():
-                batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
-        if ACTION in batch.keys():
-            actions = batch[ACTION]
-            act_ids = self.tokenize_action(actions)
-            batch['action'] = act_ids
-        if "ref_action" in batch.keys():
-            ref_actions = batch['ref_action']:
-            ref_act_ids = self.tokenizer_action(actions)
-            batch['ref_action'] = ref_act_ids
         datas = self.dataset(batch)
         data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
         data_batch = autocast(data_batch, torch.float32, self.dtype)
@@ -712,9 +701,9 @@ class PI0Policy(PreTrainedPolicy):
         return data_batch
 
 
-    def forward(self, batch: dict[str, Tensor], noise=None, time=None, get_time=False) -> tuple[Tensor, dict[str, Tensor]]:
+    def forward(self, data_batch, noise=None, time=None, get_time=False) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
-        data_batch = self.prepare_inputs(batch)
+        data_batch = self.prepare_inputs(data_batch)
         loss_dict = {}
         loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
         return losses, loss_dict

@@ -229,7 +229,6 @@ class InterleavedBaseIterableDataset:
         return data
     
     def _add_action(self, data, action, need_loss, enable_cfg=True):
-        assert need_loss
         data['action'].append(action)
         data['sequence_plan'].append(
             {
@@ -371,122 +370,116 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
     def __call__(self, sample):
         batch_size = len(sample['task'])
         datas = []
-        for batch_idx in range(batch_size):
-            # observation_images = []
-            data = self._init_data()
-            ## For action generation 
-            sample_keys = list(sample.keys())
-            sorted_sample_keys = self.sort_keys(sample_keys)
+        # observation_images = []
+        data = self._init_data()
+        ## For action generation 
+        sample_keys = list(sample.keys())
+        sorted_sample_keys = self.sort_keys(sample_keys)
 
-            ## For in-context reference (image1, action , image2)-pair
-            for key in sorted_sampe_keys:
-                if "ref." in key and "observation" in key:
-                    import ipdb;ipdb.set_trace()
-                    ref_action = sample['ref_action'][batch_idx]
-                    for i in range(len(ref_action)):
-                        a_ref_action = ref_action[i].unsqueeze(0)
-                        current_image = sample[key][batch_idx][i] 
-                        next_image = sample[key][batch_idx][i + 1]
-                        data = self._add_image(
-                            data,
-                            pil_img2rgb(Image.fromarray((current_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
-                            need_loss=False,
-                            need_vae=False,
-                            need_vit=True,
-                        )
-                        data = self._add_action(
-                            data,
-                            actions,
-                            need_loss=False,
-                        )
-                        data = self._add_image(
-                            data,
-                            pil_img2rgb(Image.fromarray((next_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
-                            need_loss=False,
-                            need_vae=False,
-                            need_vit=True,
-                        )
-
-
-            for key in sorted_sample_keys:
-                if "images." in key and "observation" in key:
-                    image = sample[key][batch_idx]
+        ## For in-context reference (image1, action , image2)-pair
+        for key in sorted_sample_keys:
+            if "images." in key and "ref" in key:
+                ref_action = sample['ref_action'][0]
+                for i in range(len(ref_action) - 1):
+                    a_ref_action = ref_action[i].unsqueeze(0)
+                    current_image = sample[key][0][i]
+                    next_image = sample[key][0][i + 1]
                     data = self._add_image(
                         data,
-                        pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                        pil_img2rgb(Image.fromarray((current_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
                         need_loss=False,
-                        need_vae=self.visual_gen,
+                        need_vae=False,
                         need_vit=True,
                     )
-            ## For VQA images
-            image_cnt = 0
-            for key in sorted_sample_keys:
-                if "images" in key and "vqa" in key:
-                    image_cnt += 1
-            for image_idx in range(image_cnt):
-                key = "vqa.images.image.{}".format(image_idx)
-                image = sample[key][batch_idx]
-                data = self._add_image(
-                    data,
-                    pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
-                    need_loss=False,
-                    need_vae=False,
-                    need_vit=True,
-                )
-            ## For actionless video
-            for key in sorted_sample_keys:
-                if "images" in key and "actionless_video" in key:
-                    image = sample[key][batch_idx]
-                    data = self._add_image(
-                        data,
-                        pil_img2rgb(Image.fromarray((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
-                        need_loss=False,
-                        need_vae=True,
-                        need_vit=True,
-                    )
-
-            instruction = sample['task'][batch_idx]
-            if "action" in sorted_sample_keys:
-                instruction = "Task:" + sample['task'][batch_idx] + ". Please predict the next observation and the action."
-                data = self._add_text(data, instruction, need_loss=False)
-            else:
-                conv = json.loads(instruction)
-                for a_conv in conv:
-                    if a_conv['role'] == "assistant":
-                        a_conv = a_conv['content'][0]['text']
-                        data = self._add_text(data, a_conv, need_loss=True)
-                    elif a_conv['role'] == "user" or a_conv['role'] == 'system':
-                        a_conv = a_conv['content'][0]['text']
-                        data = self._add_text(data, a_conv, need_loss=False)
-                    else:
-                        raise NotImplementedError
-
-            ## For goal image generation
-            next_images = []
-            for key in sorted_sample_keys:
-                if "images." in key and "next" in key:
-                    next_images.append((sample[key][batch_idx].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
-            next_img_num = len(next_images)
-            if self.visual_gen:
-                if len(next_images) > 0:
-                    next_images = next_images[-1] ## TODO: select only one image for now
-                    data = self._add_image(
-                        data, 
-                        pil_img2rgb(Image.fromarray(next_images)),
-                        need_loss=True, 
-                        need_vae=False, 
-                        need_vit=True, 
-                    )
-            ## For action generation
-            if self.action_gen:
-                if ACTION in sample.keys():
-                    actions = sample[ACTION][batch_idx]
                     data = self._add_action(
                         data,
-                        actions,
-                        need_loss=True,
+                        a_ref_action,
+                        need_loss=False,
                     )
-            datas.append(data)
+                    data = self._add_image(
+                        data,
+                        pil_img2rgb(Image.fromarray((next_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                        need_loss=False,
+                        need_vae=False,
+                        need_vit=True,
+                    )
+
+        for key in sorted_sample_keys:
+            if "images." in key and "observation" in key:
+                data = self._add_image(
+                    data,
+                    pil_img2rgb(Image.fromarray((sample[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                    need_loss=False,
+                    need_vae=self.visual_gen,
+                    need_vit=True,
+                )
+        ## For VQA images
+        image_cnt = 0
+        for key in sorted_sample_keys:
+            if "images" in key and "vqa" in key:
+                image_cnt += 1
+        for image_idx in range(image_cnt):
+            key = "vqa.images.image.{}".format(image_idx)
+            data = self._add_image(
+                data,
+                pil_img2rgb(Image.fromarray((sample[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                need_loss=False,
+                need_vae=False,
+                need_vit=True,
+            )
+        ## For actionless video
+        for key in sorted_sample_keys:
+            if "images" in key and "actionless_video" in key:
+                data = self._add_image(
+                    data,
+                    pil_img2rgb(Image.fromarray((sample[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
+                    need_loss=False,
+                    need_vae=True,
+                    need_vit=True,
+                )
+
+        instruction = sample['task'][0]
+        if "action" in sorted_sample_keys:
+            instruction = "Task:" + sample['task'][0] + ". Please predict the next observation and the action."
+            data = self._add_text(data, instruction, need_loss=False)
+        else:
+            conv = json.loads(instruction)
+            for a_conv in conv:
+                if a_conv['role'] == "assistant":
+                    a_conv = a_conv['content'][0]['text']
+                    data = self._add_text(data, a_conv, need_loss=True)
+                elif a_conv['role'] == "user" or a_conv['role'] == 'system':
+                    a_conv = a_conv['content'][0]['text']
+                    data = self._add_text(data, a_conv, need_loss=False)
+                else:
+                    raise NotImplementedError
+
+        ## For goal image generation
+        next_images = []
+        for key in sorted_sample_keys:
+            if "images." in key and "next" in key:
+                next_images.append((sample[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+        next_img_num = len(next_images)
+        if self.visual_gen:
+            if len(next_images) > 0:
+                next_images = next_images[-1] ## TODO: select only one image for now
+                data = self._add_image(
+                    data, 
+                    pil_img2rgb(Image.fromarray(next_images)),
+                    need_loss=True, 
+                    need_vae=False, 
+                    need_vit=True, 
+                )
+        ## For action generation
+        if self.action_gen:
+            if ACTION in sample.keys():
+                actions = sample['action'][0]
+                data = self._add_action(
+                    data,
+                    actions,
+                    need_loss=True,
+                )
+        datas.append(data)
         return datas
     
 
@@ -661,13 +654,45 @@ class PackedDataset:
             data['packed_act_token_indexes'] = torch.tensor(sequence_status['packed_act_token_indexes'])
         return data
 
-    def __call__(self, sample):
-        sample = self.dataset(sample)
+    def __call__(self, batch_dataloader, tokenize_action, use_ref=True):
+        dl_iter = iter(batch_dataloader)
+        batch_data_indexes = []
         sequence_status = self.set_sequence_status()
-        for i in range(len(sample)):
-            a_sample = sample[i]
-            sequence_status = self.pack_sequence(a_sample, sequence_status)
-        sequence_status = self.to_tensor(sequence_status)
+        buffer = []
+        while True:
+            while True:
+                try:
+                    batch = next(dl_iter)
+                except StopIteration:
+                    dl_iter = iter(dataloader)
+                    batch = next(dl_iter)
+                if "action" in batch.keys():
+                    actions = batch["action"]
+                    act_ids = tokenize_action(actions)
+                    batch['action'] = act_ids
+                if "ref_action" in batch.keys() and use_ref:
+                    ref_actions = batch['ref_action'][0]
+                    ref_act_ids = []
+                    for ref_action in ref_actions:
+                        ref_act_ids.append(tokenize_action(ref_action.unsqueeze(0).unsqueeze(0))[0])
+                    batch['ref_action'] = [ref_act_ids]
+                sample = self.dataset(batch)[0]
+                num_tokens = sample['num_tokens'] + 2 * len(sample['sequence_plan'])
+                if num_tokens < self.max_num_tokens_per_sample:
+                    sequence_status = self.pack_sequence(sample, sequence_status)
+                    batch_data_indexes.append(sample['data_indexes'])
+                    break
+                else:
+                    print(f"skip a sample with length {num_tokens}")
+                    continue
+            sequence_status = self.to_tensor(sequence_status)
+            if sequence_status['curr'] + num_tokens > self.max_num_tokens:
+                print(f"Yielding data with length {sum(sequence_status['sample_lens'])}")
+                data = self.to_tensor(sequence_status)
+                yield data
+                sequence_status = self.set_sequence_status()
+                batch_data_indexes = []
+            continue
         return sequence_status
 
     def pack_sequence(self, sample, sequence_status):

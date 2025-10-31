@@ -52,6 +52,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
 
     n_obs_steps: int = 1
+    use_ref: bool = True
     normalization_mapping: dict[str, NormalizationMode] = field(default_factory=dict)
 
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)

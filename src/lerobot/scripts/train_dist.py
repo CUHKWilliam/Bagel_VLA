@@ -90,14 +90,10 @@ def update_policy(
     device = get_device_from_parameters(policy)
 
     policy.train()
-    print('debug a')
     loss, output_dict = policy.forward(batch)
     # policy.select_action(batch)
-    print('debug b')
     policy.backward(loss)
-    print('debug c')
     policy.step()
-    import ipdb;ipdb.set_trace()
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
     mse = output_dict['mse']
@@ -256,7 +252,7 @@ def train(cfg: TrainPipelineConfig):
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=0, # cfg.num_workers, ## TODO: set worker
-        batch_size=cfg.batch_size,
+        batch_size=1,
         # shuffle=shuffle,
         sampler=train_sampler,
         pin_memory=False,
@@ -319,15 +315,11 @@ def train(cfg: TrainPipelineConfig):
     if accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
     # Create iterator from dataloader
-    dl_iter = iter(dataloader)
+    seq_dataloader = policy.dataset(dataloader, policy.tokenize_action, use_ref=cfg.policy.use_ref)
+
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        # Get next batch, cycling through dataloader if needed
-        try:
-            batch = next(dl_iter)
-        except StopIteration:
-            dl_iter = iter(dataloader)
-            batch = next(dl_iter)
+        data_batch = next(seq_dataloader)
         train_tracker.dataloading_s = time.perf_counter() - start_time
         train_tracker, output_dict = update_policy(
                 train_tracker,
