@@ -657,16 +657,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ref_num_start = np.random.randint(low=ep_start, high=ep_end - ref_num - 1) 
             for key in query_indices:
                 query_indices[key] = [i for i in range(ref_num_start, ref_num_start + ref_num)] + query_indices[key]
-
+        else:
+            ref_num = 0
         padding = {  # Pad values outside of current episode range
             f"{key}_is_pad": torch.BoolTensor(
                 [(idx + delta < ep_start.item()) | (idx + delta >= ep_end.item()) for delta in delta_idx]
             )
             for key, delta_idx in self.delta_indices.items()
         }
-        if with_ref:
-            return query_indices, padding, ref_num
-        return query_indices, padding
+        return query_indices, padding, ref_num
 
     def _get_query_timestamps(
         self,
@@ -719,6 +718,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         query_indices = None
         if self.delta_indices is not None:
             query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=True)
+            item['ref_num'] = ref_num
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
             for key, val in query_result.items():

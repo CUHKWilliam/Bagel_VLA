@@ -379,9 +379,9 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         ## For in-context reference (image1, action , image2)-pair
         for key in sorted_sample_keys:
             if "images." in key and "ref" in key:
-                ref_action = sample['ref_action'][0]
+                ref_action = sample['ref_action']
                 for i in range(len(ref_action) - 1):
-                    a_ref_action = ref_action[i].unsqueeze(0)
+                    a_ref_action = ref_action[i]
                     current_image = sample[key][0][i]
                     next_image = sample[key][0][i + 1]
                     data = self._add_image(
@@ -479,6 +479,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     actions,
                     need_loss=True,
                 )
+        data['ref_num'] = sample['ref_num']
         datas.append(data)
         return datas
     
@@ -598,6 +599,7 @@ class PackedDataset:
             packed_vit_token_indexes    = list(), 
             packed_act_token_indexes = list(),
             packed_act_tokens        = list(),
+            ref_num                  = list(),
         )
         return sequence_status
 
@@ -675,17 +677,15 @@ class PackedDataset:
                     ref_act_ids = []
                     for ref_action in ref_actions:
                         ref_act_ids.append(tokenize_action(ref_action.unsqueeze(0).unsqueeze(0))[0])
-                    batch['ref_action'] = [ref_act_ids]
+                    batch['ref_action'] = ref_act_ids
                 sample = self.dataset(batch)[0]
                 num_tokens = sample['num_tokens'] + 2 * len(sample['sequence_plan'])
                 if num_tokens < self.max_num_tokens_per_sample:
                     sequence_status = self.pack_sequence(sample, sequence_status)
-                    batch_data_indexes.append(sample['data_indexes'])
                     break
                 else:
                     print(f"skip a sample with length {num_tokens}")
                     continue
-            sequence_status = self.to_tensor(sequence_status)
             if sequence_status['curr'] + num_tokens > self.max_num_tokens:
                 print(f"Yielding data with length {sum(sequence_status['sample_lens'])}")
                 data = self.to_tensor(sequence_status)
@@ -887,6 +887,7 @@ class PackedDataset:
         else:
             sequence_status['split_lens'].extend(split_lens)
             sequence_status['attn_modes'].extend(attn_modes)
+        sequence_status['ref_num'].append(sample['ref_num'])
         return sequence_status
 
 
