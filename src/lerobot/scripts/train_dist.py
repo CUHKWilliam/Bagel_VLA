@@ -134,14 +134,13 @@ def train(cfg: TrainPipelineConfig):
         kwargs_handlers=[ddp_kwargs],
         project_dir=cfg.output_dir,
     )
-    if accelerator.is_main_process:
-        if cfg.wandb.enable and cfg.wandb.project:
-            wandb_logger = WandBLogger(cfg)
-        else:
-            wandb_logger = None
-            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    if cfg.wandb.enable and cfg.wandb.project:
+        wandb_logger = WandBLogger(cfg, accelerator)
+    else:
+        wandb_logger = None
+        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
-
+    '''
     accelerator.init_trackers(
         project_name=cfg.wandb.project,
         init_kwargs={
@@ -162,6 +161,7 @@ def train(cfg: TrainPipelineConfig):
             }
         },
     )
+    '''
 
     # Set seed for reproducibility
     if cfg.seed is not None:
@@ -324,7 +324,7 @@ def train(cfg: TrainPipelineConfig):
         train_tracker, output_dict = update_policy(
                 train_tracker,
                 policy,
-                batch,
+                data_batch,
                 accelerator,
                 step,
         )
@@ -352,7 +352,7 @@ def train(cfg: TrainPipelineConfig):
                 # predict_action = str(output_dict['predict_action'].view(-1).tolist())
                 # gt_action = str(output_dict['gt_action'].tolist())
                 # wandb_log_dict.update({"action": [{"gt_action": gt_action, "predicted_action": predict_action}]})
-                wandb_logger.log_dict(wandb_log_dict, step)
+                wandb_logger.log_dict(wandb_log_dict, step=tokens)
             train_tracker.reset_averages()
         
         if cfg.save_checkpoint and is_saving_step:
@@ -430,12 +430,8 @@ def train(cfg: TrainPipelineConfig):
             print("validation end")
             val_tracker_dict = validation_tracker.to_dict() 
             wandb_log_dict = {**val_tracker_dict}
-            if accelerator.is_main_process:
-                for k, v in wandb_log_dict.items():
-                    accelerator.log({f"{'validation'}/{k}": v}, step=step)
-            
-                if wandb_logger:
-                    wandb_logger.log_dict(wandb_log_dict, step, mode="validation")
+            if wandb_logger:
+                wandb_logger.log_dict(wandb_log_dict, step=tokens, mode="validation")
 
 
         if False:
@@ -476,10 +472,8 @@ def train(cfg: TrainPipelineConfig):
                 eval_info.pop("per_episode")
                 logging.info(eval_tracker)
                 wandb_log_dict = {**eval_tracker_dict, **eval_info}
-                for k, v in wandb_log_dict.items():
-                    accelerator.log({f"{'eval'}/{k}": v}, step=step)
                 if wandb_logger:
-                    wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
+                    wandb_logger.log_dict(wandb_log_dict, step=tokens, mode="eval")
             # Set back to training mode
             print("eval log dict done")
             policy.train()

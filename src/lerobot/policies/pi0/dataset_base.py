@@ -681,7 +681,6 @@ class PackedDataset:
                 sample = self.dataset(batch)[0]
                 num_tokens = sample['num_tokens'] + 2 * len(sample['sequence_plan'])
                 if num_tokens < self.max_num_tokens_per_sample:
-                    sequence_status = self.pack_sequence(sample, sequence_status)
                     break
                 else:
                     print(f"skip a sample with length {num_tokens}")
@@ -692,6 +691,7 @@ class PackedDataset:
                 yield data
                 sequence_status = self.set_sequence_status()
                 batch_data_indexes = []
+            sequence_status = self.pack_sequence(sample, sequence_status)
             continue
         return sequence_status
 

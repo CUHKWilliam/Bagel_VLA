@@ -120,12 +120,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=12000,
+        default=10000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=35000,
+        default=10000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -691,8 +691,7 @@ class PI0Policy(PreTrainedPolicy):
 
     def prepare_inputs(self, data_batch):
         self.dtype = self.model.state_proj.weight.dtype
-        datas = self.dataset(batch)
-        data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        data_batch = SimpleCustomBatch([data_batch]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
         data_batch = autocast(data_batch, torch.float32, self.dtype)
         if training_args.visual_gen:
             with torch.no_grad():
