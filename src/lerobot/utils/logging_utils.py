@@ -84,6 +84,7 @@ class MetricsTracker:
         "episodes",
         "epochs",
         "tokens",
+        "_num_episodes"
     ]
 
     def __init__(
@@ -99,6 +100,7 @@ class MetricsTracker:
         self.metrics = metrics
         self.tokens = initial_tokens
         self.steps = initial_step
+        self._num_episodes = num_episodes
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
         if name in self.__dict__:
@@ -120,9 +122,10 @@ class MetricsTracker:
         """
         Updates metrics that depend on 'step' for one step.
         """
-        self.epochs = self.samples / self._num_frames * self.steps
+        self.epochs = self._num_episodes / self._num_frames * self.steps
         self.tokens += num_token
         self.steps += 1
+
     def __str__(self) -> str:
         display_list = [
             f"step:{format_big_number(self.steps)}",

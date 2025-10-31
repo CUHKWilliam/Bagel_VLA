@@ -37,7 +37,7 @@ from lerobot.policies.pi0.modeling.qwen2 import Qwen2Config as _Qwen2Config
 torch._dynamo.config.cache_size_limit = 512
 torch._dynamo.config.accumulated_cache_size_limit = 4096
 # flex_attention = torch.compile(flex_attention) # , dynamic=True, mode='max-autotune'
-flex_attention = torch.compile(flex_attention)
+# flex_attention = torch.compile(flex_attention, dynamic=True, mode='max-autotune')
 
 
 class Qwen2Config(_Qwen2Config):

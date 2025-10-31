@@ -120,12 +120,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=10000,
+        default=3000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=10000,
+        default=3000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(

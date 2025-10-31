@@ -235,7 +235,7 @@ def train(cfg: TrainPipelineConfig):
     # optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     step = 0  # number of policy updates (forward + backward + optim)
-
+    tokens = 0
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
@@ -332,7 +332,7 @@ def train(cfg: TrainPipelineConfig):
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
-        num_tokens = data_batch['sample_len']
+        num_tokens = data_batch['sequence_length']
         tokens += num_tokens
         train_tracker.step(num_tokens)
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
@@ -344,9 +344,9 @@ def train(cfg: TrainPipelineConfig):
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 observation_images = []
-                for key in batch.keys():
-                    if "images." in key and "observation" in key:
-                        observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
+                # for key in batch.keys():
+                #     if "images." in key and "observation" in key:
+                #         observation_images.append((batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
                 # observation_image = cv2.hconcat(observation_images)
                 # wandb_log_dict.update({"observation": [observation_image]})
                 # predict_action = str(output_dict['predict_action'].view(-1).tolist())
