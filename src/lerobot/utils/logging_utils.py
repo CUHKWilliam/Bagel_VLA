@@ -131,7 +131,7 @@ class MetricsTracker:
             f"step:{format_big_number(self.steps)}",
             f"epch:{self.epochs:.2f}",
             # number of seen training tokens,
-            f"tok:{format_big_number(self.tokens)}"
+            f"tok:{format_big_number(self.tokens)}",
             *[str(m) for m in self.metrics.values()],
         ]
         return " ".join(display_list)

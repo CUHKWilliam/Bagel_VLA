@@ -24,7 +24,7 @@ from termcolor import colored
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.constants import PRETRAINED_MODEL_DIR
-
+import torch
 
 def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
@@ -126,16 +126,18 @@ class WandBLogger:
             raise ValueError(mode)
         if step is None and custom_step_key is None:
             raise ValueError("Either step or custom_step_key must be provided.")
-
+        
+        step_all_proc = self.accelerator.gather(torch.tensor(step).cuda())
+        step = step_all_proc.sum().detach().cpu().item()
         for k, v in d.items():
             if not isinstance(v, (int, float, str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )
                 continue
-            import ipdb;ipdb.set_trace()    
+            v_all_proc = self.accelerator.gather(torch.tensor(d[k]).float().cuda())
             if self.accelerator.is_main_process:
-                self._wandb.log(data={f"{mode}/{k}": v}, step=step)
+                self._wandb.log(data={f"{mode}/{k}": v_all_proc.mean().detach().cpu().item()}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:
