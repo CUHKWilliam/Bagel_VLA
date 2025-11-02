@@ -72,6 +72,7 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
+import torchvision.transforms as transforms
 
 CODEBASE_VERSION = "v2.1"
 
@@ -716,6 +717,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_idx = item["episode_index"].item()
 
         query_indices = None
+
         if self.delta_indices is not None:
             query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=True)
             item['ref_num'] = ref_num
@@ -755,11 +757,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ref_video_frames[f"ref.{k.replace('observation.', '')}"] = video_frames[k][:ref_num]
             item = {**current_video_frames, **item, **next_video_frames, **ref_video_frames}
         
-        
-        if self.image_transforms is not None:
-            image_keys = self.meta.camera_keys
-            for cam in image_keys:
-                item[cam] = self.image_transforms(item[cam])
+        ## randomly transform images with the same postfix and different prefix
+        postfixes = ['observation', 'ref', 'next']
+        for key in item.keys():
+            transform = transforms.Compose([
+                    transforms.RandomHorizontalFlip(p=0.5),
+                    transforms.RandomVerticalFlip(p=0.3),
+                    transforms.RandomRotation(degrees=30),
+                    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+            ])
+            for postfix in postfixes:
+                if postfix in key:
+                    item[key] = transform(item[key])
         
         # Add task as a string
         task_idx = item["task_index"].item()

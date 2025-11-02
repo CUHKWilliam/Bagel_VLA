@@ -374,7 +374,10 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         data = self._init_data()
         ## For action generation 
         sample_keys = list(sample.keys())
-        sorted_sample_keys = self.sort_keys(sample_keys)
+        sorted_sample_keys =self.sort_keys(sample_keys)
+
+        ## TODO: shuffle keys
+        sorted_sample_keys = np.random.shuffle(sorted_sample_keys)
 
         ## For in-context reference (image1, action , image2)-pair
         for key in sorted_sample_keys:
@@ -462,7 +465,8 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         next_img_num = len(next_images)
         if self.visual_gen:
             if len(next_images) > 0:
-                next_images = next_images[-1] ## TODO: select only one image for now
+                # next_images = next_images[-1] ## TODO: select only one image for now
+                next_images = cv2.hconcat(next_images)
                 data = self._add_image(
                     data, 
                     pil_img2rgb(Image.fromarray(next_images)),

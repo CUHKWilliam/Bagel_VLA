@@ -90,12 +90,16 @@ def update_policy(
     device = get_device_from_parameters(policy)
 
     policy.train()
+    print('test a')
     loss, output_dict = policy.forward(batch)
+    print('test b')
     # policy.select_action(batch)
     policy.backward(loss)
     policy.step()
+    print('test c')
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
+    print('test d')
     mse = output_dict['mse']
     ce = output_dict['ce']
     mse_loss_value = accelerator.gather(mse.detach()).mean().item()
