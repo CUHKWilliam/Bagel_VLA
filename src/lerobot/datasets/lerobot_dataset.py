@@ -654,7 +654,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for key, delta_idx in self.delta_indices.items()
         }
         if with_ref:
-            ref_num = np.random.randint(low=0, high=1)
+            ref_num = np.random.randint(low=3, high=8)
             ref_num_start = np.random.randint(low=ep_start, high=ep_end - ref_num - 1) 
             for key in query_indices:
                 query_indices[key] = [i for i in range(ref_num_start, ref_num_start + ref_num)] + query_indices[key]
@@ -757,18 +757,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ref_video_frames[f"ref.{k.replace('observation.', '')}"] = video_frames[k][:ref_num]
             item = {**current_video_frames, **item, **next_video_frames, **ref_video_frames}
         
-        ## randomly transform images with the same postfix and different prefix
-        postfixes = ['observation', 'ref', 'next']
-        for key in item.keys():
+        prefixes = ['observation.', 'ref.', 'next.']
+        for postfix in self.meta.video_keys:
+            postfix = '.'.join(postfix.split('.')[1:])
             transform = transforms.Compose([
                     transforms.RandomHorizontalFlip(p=0.5),
                     transforms.RandomVerticalFlip(p=0.3),
                     transforms.RandomRotation(degrees=30),
                     transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
             ])
-            for postfix in postfixes:
-                if postfix in key:
-                    item[key] = transform(item[key])
+            for prefix in prefixes:
+                for key in item.keys():
+                    if prefix in key and postfix in key:
+                        if prefix == "ref.":
+                            for idx in range(len(item[key])):
+                                item[key][idx] = transform(item[key][idx])
+                        else:
+                            item[key] = transform(item[key])
         
         # Add task as a string
         task_idx = item["task_index"].item()

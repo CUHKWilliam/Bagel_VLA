@@ -345,22 +345,30 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
     def sort_keys(self,sample_keys):
         ## order: wrist first, head second, 3rd view(images) last; left first, right second
         sorted_sample_keys = []
-        for key in sample_keys:
-            if "left" in key and "wrist" in key:
-                sorted_sample_keys.append(key)
-        for key in sample_keys:
-            if "right" in key and "wrist" in key:
-                sorted_sample_keys.append(key)
-        for key in sample_keys:
-            if "left" in key and "head" in key:
-                sorted_sample_keys.append(key)
-        for key in sample_keys:
-            if "right" in key and "head" in key:
-                sorted_sample_keys.append(key)
-        for key in sample_keys:
-            if "images" in key and "wrist" not in key and "head" not in key:
-                sorted_sample_keys.append(key)
- 
+        def func1():
+            for key in sample_keys:
+                if "left" in key and "wrist" in key:
+                    sorted_sample_keys.append(key)
+        def func2():
+            for key in sample_keys:
+                if "right" in key and "wrist" in key:
+                    sorted_sample_keys.append(key)
+        def func3():
+            for key in sample_keys:
+                if "left" in key and "head" in key:
+                    sorted_sample_keys.append(key)
+        def func4():
+            for key in sample_keys:
+                if "right" in key and "head" in key:
+                    sorted_sample_keys.append(key)
+        def func5():
+            for key in sample_keys:
+                if "images" in key and "wrist" not in key and "head" not in key:
+                    sorted_sample_keys.append(key)
+        funcs = [func1, func2, func3, func4, func5]
+        np.random.shuffle(funcs)
+        for func in funcs:
+            func()
         for key in sample_keys:
             if key not in sorted_sample_keys:
                 sorted_sample_keys.append(key)
@@ -377,7 +385,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         sorted_sample_keys =self.sort_keys(sample_keys)
 
         ## TODO: shuffle keys
-        sorted_sample_keys = np.random.shuffle(sorted_sample_keys)
+        np.random.shuffle(sorted_sample_keys)
 
         ## For in-context reference (image1, action , image2)-pair
         for key in sorted_sample_keys:

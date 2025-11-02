@@ -403,7 +403,6 @@ def train(cfg: TrainPipelineConfig):
                     drop_last=False,
                 )
                 for val_step in tqdm(range(val_total_steps)):
-                    batch = next(dl_iter)
                     dl_iter = iter(dataloader)
                     batch = next(dl_iter)          
                     with torch.no_grad():
