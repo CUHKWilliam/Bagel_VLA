@@ -90,16 +90,12 @@ def update_policy(
     device = get_device_from_parameters(policy)
 
     policy.train()
-    print('test a')
     loss, output_dict = policy.forward(batch)
-    print('test b')
     # policy.select_action(batch)
     policy.backward(loss)
     policy.step()
-    print('test c')
     # Gather metrics across all processes
     loss_value = accelerator.gather(loss.detach()).mean().item()
-    print('test d')
     mse = output_dict['mse']
     ce = output_dict['ce']
     mse_loss_value = accelerator.gather(mse.detach()).mean().item()
@@ -394,7 +390,7 @@ def train(cfg: TrainPipelineConfig):
                 all_mse_values = torch.tensor(0.).float().cuda()
                 all_ce_values = torch.tensor(0.).float().cuda()
                 val_sampler = torch.utils.data.WeightedRandomSampler(weights=val_sample_weights_dict[ds_type], num_samples=len(train_sample_weights))
-                dataloader = torch.utils.data.DataLoader(
+                val_dataloader = torch.utils.data.DataLoader(
                     dataset,
                     num_workers=0, # cfg.num_workers, ## TODO: set worker
                     batch_size=1,
@@ -402,11 +398,12 @@ def train(cfg: TrainPipelineConfig):
                     pin_memory=False,
                     drop_last=False,
                 )
+                val_seq_dataloader = policy.dataset(val_dataloader, policy.tokenize_action, use_ref=cfg.policy.use_ref)
                 for val_step in tqdm(range(val_total_steps)):
-                    dl_iter = iter(dataloader)
-                    batch = next(dl_iter)          
+                    dl_iter = iter(val_seq_dataloader)
+                    val_data_batch = next(dl_iter)          
                     with torch.no_grad():
-                        loss, output_dict = policy.forward(batch)
+                        loss, output_dict = policy.forward(val_data_batch)
                     loss_value = loss.detach().mean()
                     mse = output_dict['mse']
                     ce = output_dict['ce']
@@ -426,9 +423,9 @@ def train(cfg: TrainPipelineConfig):
                 val_loss_dict[f'{ds_type}_ce'] = ce_loss_value
                 val_loss_dict[f'{ds_type}_mse'] = loss_value
             validation_tracker = MetricsTracker(
-                1, dataset.num_frames, dataset.num_episodes, validation_metrics,
+                dataset.num_frames, dataset.num_episodes, validation_metrics,
             )
-            for val_loss_key in val_loss_dict:
+            for val_loss_key in val_loss_dict.keys():
                 setattr(validation_tracker, val_loss_key, val_loss_dict[val_loss_key])
             print("validation end")
             val_tracker_dict = validation_tracker.to_dict() 

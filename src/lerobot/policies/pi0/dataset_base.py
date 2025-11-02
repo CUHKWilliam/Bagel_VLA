@@ -23,7 +23,7 @@ import torch
 from lerobot.utils.data_utils import pil_img2rgb
 import cv2
 from lerobot.constants import ACTION, OBS_STATE
-
+import copy
 
 Image.MAX_IMAGE_PIXELS = 200000000
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -691,13 +691,17 @@ class PackedDataset:
                         ref_act_ids.append(tokenize_action(ref_action.unsqueeze(0).unsqueeze(0))[0])
                     batch['ref_action'] = ref_act_ids
                 sample = self.dataset(batch)[0]
-                num_tokens = sample['num_tokens'] + 2 * len(sample['sequence_plan'])
+                sample_test = copy.deepcopy(sample)
+                sequence_status_test = self.set_sequence_status()
+                sequence_status_test = self.pack_sequence(sample_test, sequence_status_test)
+                num_tokens = sum(sequence_status_test['sample_lens'])
+                # num_tokens = sample['num_tokens'] + 2 * len(sample['sequence_plan'])
                 if num_tokens < self.max_num_tokens_per_sample:
                     break
                 else:
                     print(f"skip a sample with length {num_tokens}")
                     continue
-            if sequence_status['curr'] + num_tokens > self.max_num_tokens:
+            if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
                 print(f"Yielding data with length {sum(sequence_status['sample_lens'])}")
                 data = self.to_tensor(sequence_status)
                 yield data

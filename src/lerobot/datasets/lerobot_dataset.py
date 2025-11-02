@@ -654,7 +654,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for key, delta_idx in self.delta_indices.items()
         }
         if with_ref:
-            ref_num = np.random.randint(low=3, high=8)
+            ref_num = np.random.randint(low=0, high=2)
             ref_num_start = np.random.randint(low=ep_start, high=ep_end - ref_num - 1) 
             for key in query_indices:
                 query_indices[key] = [i for i in range(ref_num_start, ref_num_start + ref_num)] + query_indices[key]
