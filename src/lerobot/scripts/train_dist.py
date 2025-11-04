@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# import swanlab
-# swanlab.sync_wandb()
+import swanlab
+swanlab.sync_wandb()
 
 from tqdm import tqdm
 import logging
@@ -63,7 +63,7 @@ import cv2
 from lerobot.configs.train import TrainPipelineConfig
 from torch.utils.data import WeightedRandomSampler
 import pickle
-
+import multiprocessing
 
 class CustomWeightedRandomSampler(WeightedRandomSampler):
     """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
@@ -251,7 +251,7 @@ def train(cfg: TrainPipelineConfig):
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=0, # cfg.num_workers, ## TODO: set worker
+        num_workers=10, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
         batch_size=1,
         # shuffle=shuffle,
         sampler=train_sampler,
@@ -309,7 +309,7 @@ def train(cfg: TrainPipelineConfig):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
     train_tracker = MetricsTracker(
-        dataset.num_frames, dataset.num_episodes, train_metrics, 
+        dataset.num_frames, dataset.num_episodes, train_metrics, accelerator=accelerator,
     )
     policy.train()
     if accelerator.is_main_process:
@@ -423,7 +423,7 @@ def train(cfg: TrainPipelineConfig):
                 val_loss_dict[f'{ds_type}_ce'] = ce_loss_value
                 val_loss_dict[f'{ds_type}_mse'] = loss_value
             validation_tracker = MetricsTracker(
-                dataset.num_frames, dataset.num_episodes, validation_metrics,
+                dataset.num_frames, dataset.num_episodes, validation_metrics, accelerator=accelerator
             )
             for val_loss_key in val_loss_dict.keys():
                 setattr(validation_tracker, val_loss_key, val_loss_dict[val_loss_key])
@@ -459,7 +459,8 @@ def train(cfg: TrainPipelineConfig):
                 dataset.num_frames, 
                 dataset.num_episodes, 
                 eval_metrics, 
-                initial_step=step
+                initial_step=step,
+                accelerator=accelerator,
             )
             eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
 

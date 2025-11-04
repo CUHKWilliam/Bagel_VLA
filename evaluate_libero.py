@@ -169,8 +169,10 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
             agentview_image = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
             last_predict_image = np.zeros_like(agentview_image).astype(np.uint8)
             # frames.append(agentview_image)
-            # import ipdb; ipdb.set_trace()
+            # import ipdb; ipdb.set_trace())
+            NUM_PRIOR_ACTIONS = 4
             logging.info(f"Starting episode {task_episodes+1}...")
+            prior = [[], []]
             while t < max_steps:
                 # try:
                 if True:
@@ -202,10 +204,17 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                     }
                     # Query model to get action
                     ts = time.time()
-                    with torch.inference_mode():
-                        action_tensor, predict_image = policy.select_action(observation)
+                    if t < NUM_PRIOR_ACTIONS:
+                        action_tensor = torch.from_numpy()
+                        predict_image = None
+                        prior[0].append(action_tensor)
+                        prior[1].append(observation)
+                    else:
+                        if t == NUM_PRIOR_ACTIONS:
+                            prior[1].append(observation)
+                        with torch.inference_mode():
+                            action_tensor, predict_image = policy.select_action(observation, prior=prior)
                     action = action_tensor.cpu().numpy()[0]
-                    # action[-1] = 1 - action[-1]
                     action = normalize_gripper_action(action, binarize=False)
                     action = invert_gripper_action(action)
                     if SHOW_PREDICT_IMAGE:

@@ -388,13 +388,12 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         np.random.shuffle(sorted_sample_keys)
 
         ## For in-context reference (image1, action , image2)-pair
-        for key in sorted_sample_keys:
-            if "images." in key and "ref" in key:
-                ref_action = sample['ref_action']
-                for i in range(len(ref_action) - 1):
+        for i in range(len(sample['ref_action'])):
+            for key in sorted_sample_keys:
+                if "images." in key and "ref" in key:
+                    ref_action = sample['ref_action']
                     a_ref_action = ref_action[i]
                     current_image = sample[key][0][i]
-                    next_image = sample[key][0][i + 1]
                     data = self._add_image(
                         data,
                         pil_img2rgb(Image.fromarray((current_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
@@ -402,19 +401,12 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                         need_vae=False,
                         need_vit=True,
                     )
-                    data = self._add_action(
-                        data,
-                        a_ref_action,
-                        need_loss=False,
-                    )
-                    data = self._add_image(
-                        data,
-                        pil_img2rgb(Image.fromarray((next_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
-                        need_loss=False,
-                        need_vae=False,
-                        need_vit=True,
-                    )
-
+                    if i < len(ref_action) - 1:
+                        data = self._add_action(
+                            data,
+                            a_ref_action,
+                            need_loss=False,
+                        )
         for key in sorted_sample_keys:
             if "images." in key and "observation" in key:
                 data = self._add_image(

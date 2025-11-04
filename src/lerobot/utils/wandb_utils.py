@@ -86,7 +86,7 @@ class WandBLogger:
                 entity=self.cfg.entity,
                 name=self.job_name,
                 notes=self.cfg.notes,
-                tags="no_tag", # cfg_to_group(cfg, return_list=True),
+                # tags="no_tag", # cfg_to_group(cfg, return_list=True),
                 dir=self.log_dir,
                 config=cfg.to_dict(),
                 # TODO(rcadene): try set to True
@@ -127,17 +127,14 @@ class WandBLogger:
         if step is None and custom_step_key is None:
             raise ValueError("Either step or custom_step_key must be provided.")
         
-        step_all_proc = self.accelerator.gather(torch.tensor(step).cuda())
-        step = step_all_proc.sum().detach().cpu().item()
         for k, v in d.items():
             if not isinstance(v, (int, float, str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )
                 continue
-            v_all_proc = self.accelerator.gather(torch.tensor(d[k]).float().cuda())
             if self.accelerator.is_main_process:
-                self._wandb.log(data={f"{mode}/{k}": v_all_proc.mean().detach().cpu().item()}, step=step)
+                self._wandb.log(data={f"{mode}/{k}":v}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:

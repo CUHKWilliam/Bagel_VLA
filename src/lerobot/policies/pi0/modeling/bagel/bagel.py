@@ -380,6 +380,40 @@ class Bagel(PreTrainedModel):
         }
 
         return generation_input, newlens, new_rope
+    
+    def prepare_actions(self, curr_kvlens, curr_rope, actions, tokenizer, new_token_ids):
+        packed_action_ids = list()
+        packed_action_position_ids = list()
+        action_token_lens = list()
+        packed_action_indexes = list()
+        packed_key_value_indexes = list()
+
+        curr = 0
+        newlens, new_rope = list(), list()
+        for action, curr_kvlen, curr_position_id in zip(actions, curr_kvlens, curr_rope):
+            packed_key_value_indexes.extend(range(curr, curr + curr_kvlen))
+            curr += curr_kvlen
+
+            action_ids = tokenizer.encode(action)
+            action_ids = [new_token_ids['boa_token_id']] + action_ids + [new_token_ids['eoa_token_id']]
+            action_token_lens.append(len(action_ids))
+            packed_action_ids.extend(action_ids)
+            packed_action_position_ids.extend(range(curr_position_id, curr_position_id + len(action_ids)))
+            packed_text_indexes.extend(range(curr, curr + len(action_ids)))
+            newlens.append(curr_kvlen + len(action_ids))
+            new_rope.append(curr_position_id + len(action_ids))
+            curr += len(action_ids)
+
+        generation_input = {
+            "action_token_lens": torch.tensor(action_token_lens, dtype=torch.int),
+            "packed_action_ids": torch.tensor(packed_action_ids, dtype=torch.long),
+            "packed_action_position_ids": torch.tensor(packed_action_position_ids, dtype=torch.long),
+            "packed_action_indexes": torch.tensor(packed_action_indexes, dtype=torch.long),
+            "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
+            "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
+        }
+
+        return generation_input, newlens, new_rope
 
     @torch.no_grad
     def forward_cache_update_text(

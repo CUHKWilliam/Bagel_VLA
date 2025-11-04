@@ -49,7 +49,7 @@ class WandBConfig:
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None
-    mode: str | None = 'online'  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    mode: str | None = 'offline'  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
 
 
 @dataclass

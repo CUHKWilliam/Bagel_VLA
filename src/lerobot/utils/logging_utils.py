@@ -16,7 +16,7 @@
 from typing import Any
 
 from lerobot.utils.utils import format_big_number
-
+import torch
 
 class AverageMeter:
     """
@@ -84,7 +84,8 @@ class MetricsTracker:
         "episodes",
         "epochs",
         "tokens",
-        "_num_episodes"
+        "_num_episodes",
+        "accelerator",
     ]
 
     def __init__(
@@ -92,6 +93,7 @@ class MetricsTracker:
         num_frames: int,
         num_episodes: int,
         metrics: dict[str, AverageMeter],
+        accelerator,
         initial_tokens: int = 0,
         initial_step: int = 0
     ):
@@ -101,6 +103,7 @@ class MetricsTracker:
         self.tokens = initial_tokens
         self.steps = initial_step
         self._num_episodes = num_episodes
+        self.accelerator=accelerator
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
         if name in self.__dict__:
@@ -126,11 +129,31 @@ class MetricsTracker:
         self.tokens += num_token
         self.steps += 1
 
+        step_all_proc = self.accelerator.gather(torch.tensor(self.steps).cuda())
+        self.steps = step_all_proc.sum().detach().cpu().item()
+        
+        epochs_all_proc = self.accelerator.gather(torch.tensor(self.epochs).cuda())
+        self.epochs = epochs_all_proc.sum().detach().cpu().item()
+
+        tokens_all_proc = self.accelerator.gather(torch.tensor(self.tokens).cuda())
+        self.tokens = tokens_all_proc.sum().detach().cpu().item()
+        
+        for k in self.metrics.keys():
+            if isinstance(self.metrics[k], AverageMeter):
+                v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].avg).float().cuda())
+                self.metrics[k].avg = v_all_proc.mean().detach().cpu().item() 
+                v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].sum).float().cuda())
+                self.metrics[k].sum = v_all_proc.sum().detach().cpu().item()
+                v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].count).float().cuda())
+                self.metrics[k].count = v_all_proc.sum().detach().cpu().item()
+                v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].val).float().cuda())
+                self.metrics[k].val = v_all_proc.mean().detach().cpu().item()
+
     def __str__(self) -> str:
+        
         display_list = [
             f"step:{format_big_number(self.steps)}",
             f"epch:{self.epochs:.2f}",
-            # number of seen training tokens,
             f"tok:{format_big_number(self.tokens)}",
             *[str(m) for m in self.metrics.values()],
         ]
