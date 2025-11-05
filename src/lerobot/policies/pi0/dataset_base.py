@@ -335,12 +335,13 @@ class InterleavedBaseIterableDataset:
 
 
 class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
-    def __init__(self, transform, vit_transform, tokenizer, action_horizon=5, action_dim=7, visual_gen=True,action_gen=True,):
+    def __init__(self, transform, vit_transform, tokenizer, action_horizon=5, action_dim=7, visual_gen=True,action_gen=True, use_ref=True):
         super().__init__(transform, vit_transform, tokenizer)
         self.action_horizon, self.action_dim = action_horizon, action_dim
         self.visual_gen = visual_gen
         self.action_gen = action_gen
         self.action_horizon = action_horizon
+        self.use_ref = use_ref
 
     def sort_keys(self,sample_keys):
         ## order: wrist first, head second, 3rd view(images) last; left first, right second
@@ -385,28 +386,29 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         sorted_sample_keys =self.sort_keys(sample_keys)
 
         ## TODO: shuffle keys
-        np.random.shuffle(sorted_sample_keys)
+        if self.use_ref:
+            np.random.shuffle(sorted_sample_keys)
 
-        ## For in-context reference (image1, action , image2)-pair
-        for i in range(len(sample['ref_action'])):
-            for key in sorted_sample_keys:
-                if "images." in key and "ref" in key:
-                    ref_action = sample['ref_action']
-                    a_ref_action = ref_action[i]
-                    current_image = sample[key][0][i]
-                    data = self._add_image(
-                        data,
-                        pil_img2rgb(Image.fromarray((current_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
-                        need_loss=False,
-                        need_vae=False,
-                        need_vit=True,
-                    )
-                    if i < len(ref_action) - 1:
-                        data = self._add_action(
+            ## For in-context reference (image1, action , image2)-pair
+            for i in range(len(sample['ref_action'])):
+                for key in sorted_sample_keys:
+                    if "images." in key and "ref" in key:
+                        ref_action = sample['ref_action']
+                        a_ref_action = ref_action[i]
+                        current_image = sample[key][0][i]
+                        data = self._add_image(
                             data,
-                            a_ref_action,
+                            pil_img2rgb(Image.fromarray((current_image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
                             need_loss=False,
+                            need_vae=False,
+                            need_vit=True,
                         )
+                        if i < len(ref_action) - 1:
+                            data = self._add_action(
+                                data,
+                                a_ref_action,
+                                need_loss=False,
+                            )
         for key in sorted_sample_keys:
             if "images." in key and "observation" in key:
                 data = self._add_image(
@@ -483,7 +485,8 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     actions,
                     need_loss=True,
                 )
-        data['ref_num'] = sample['ref_num']
+        if self.use_ref:
+            data['ref_num'] = sample['ref_num']
         datas.append(data)
         return datas
     
@@ -527,7 +530,9 @@ class PackedDataset:
         action_dim=7,
         action_horizon=5,
         visual_gen=True,
+        use_ref=True,
     ):
+        self.use_ref = use_ref
         self.expected_num_tokens = expected_num_tokens
         self.max_num_tokens_per_sample = max_num_tokens_per_sample
         self.prefer_buffer_before = prefer_buffer_before
@@ -571,7 +576,7 @@ class PackedDataset:
         dataset_args['vit_transform'] = vit_transform
 
         data = UnifiedEditIterableDataset(transform, vit_transform, self.tokenizer, 
-                action_dim = self.action_dim, action_horizon = self.action_horizon, visual_gen=self.visual_gen)
+                action_dim = self.action_dim, action_horizon = self.action_horizon, visual_gen=self.visual_gen, use_ref=self.use_ref)
         return data
 
     def set_epoch(self, seed):
@@ -660,7 +665,7 @@ class PackedDataset:
             data['packed_act_token_indexes'] = torch.tensor(sequence_status['packed_act_token_indexes'])
         return data
 
-    def __call__(self, batch_dataloader, tokenize_action, use_ref=True):
+    def __call__(self, batch_dataloader, tokenize_action):
         dl_iter = iter(batch_dataloader)
         batch_data_indexes = []
         sequence_status = self.set_sequence_status()
@@ -676,7 +681,7 @@ class PackedDataset:
                     actions = batch["action"]
                     act_ids = tokenize_action(actions)
                     batch['action'] = act_ids
-                if "ref_action" in batch.keys() and use_ref:
+                if "ref_action" in batch.keys() and self.use_ref:
                     ref_actions = batch['ref_action'][0]
                     ref_act_ids = []
                     for ref_action in ref_actions:
@@ -895,7 +900,8 @@ class PackedDataset:
         else:
             sequence_status['split_lens'].extend(split_lens)
             sequence_status['attn_modes'].extend(attn_modes)
-        sequence_status['ref_num'].append(sample['ref_num'])
+        if self.use_ref:
+            sequence_status['ref_num'].append(sample['ref_num'])
         return sequence_status
 
 

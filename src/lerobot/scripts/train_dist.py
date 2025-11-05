@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import swanlab
-swanlab.sync_wandb()
+# import swanlab
+# swanlab.sync_wandb()
 
 from tqdm import tqdm
 import logging
@@ -315,7 +315,7 @@ def train(cfg: TrainPipelineConfig):
     if accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
     # Create iterator from dataloader
-    seq_dataloader = policy.dataset(dataloader, policy.tokenize_action, use_ref=cfg.policy.use_ref)
+    seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
@@ -398,7 +398,7 @@ def train(cfg: TrainPipelineConfig):
                     pin_memory=False,
                     drop_last=False,
                 )
-                val_seq_dataloader = policy.dataset(val_dataloader, policy.tokenize_action, use_ref=cfg.policy.use_ref)
+                val_seq_dataloader = policy.dataset(val_dataloader, policy.tokenize_action)
                 for val_step in tqdm(range(val_total_steps)):
                     dl_iter = iter(val_seq_dataloader)
                     val_data_batch = next(dl_iter)          

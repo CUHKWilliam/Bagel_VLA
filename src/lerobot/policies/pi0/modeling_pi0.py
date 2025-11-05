@@ -219,7 +219,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -518,6 +518,7 @@ class PI0Policy(PreTrainedPolicy):
             action_dim=self.model.bagel_model.config.action_dim,
             action_horizon = self.config.chunk_size,
             visual_gen=training_args.visual_gen,
+            use_ref=self.config.use_ref,
         )
         fast_tokenizer_path = "physical-intelligence/fast"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
@@ -788,7 +789,7 @@ class PI0FlowMatching(nn.Module):
 
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             ## TODO:
-            llm_config.num_hidden_layers = 4
+            # llm_config.num_hidden_layers = 4
 
             llm_config.layer_module = model_args.layer_module
             llm_config.qk_norm = model_args.llm_qk_norm

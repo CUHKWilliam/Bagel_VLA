@@ -345,6 +345,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
+        use_ref=True,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -461,6 +462,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
+        self.use_ref = use_ref
 
         # Unused attributes
         self.image_writer = None
@@ -757,23 +759,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ref_video_frames[f"ref.{k.replace('observation.', '')}"] = video_frames[k][:ref_num]
             item = {**current_video_frames, **item, **next_video_frames, **ref_video_frames}
         
-        prefixes = ['observation.', 'ref.', 'next.']
-        for postfix in self.meta.video_keys:
-            postfix = '.'.join(postfix.split('.')[1:])
-            transform = transforms.Compose([
-                    transforms.RandomHorizontalFlip(p=0.5),
-                    transforms.RandomVerticalFlip(p=0.3),
-                    transforms.RandomRotation(degrees=30),
-                    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-            ])
-            for prefix in prefixes:
-                for key in item.keys():
-                    if prefix in key and postfix in key:
-                        if prefix == "ref.":
-                            for idx in range(len(item[key])):
-                                item[key][idx] = transform(item[key][idx])
-                        else:
-                            item[key] = transform(item[key])
+        if self.use_ref:
+            prefixes = ['observation.', 'ref.', 'next.']
+            for postfix in self.meta.video_keys:
+                postfix = '.'.join(postfix.split('.')[1:])
+                transform = transforms.Compose([
+                        transforms.RandomHorizontalFlip(p=0.5),
+                        transforms.RandomVerticalFlip(p=0.3),
+                        transforms.RandomRotation(degrees=30),
+                        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+                ])
+                for prefix in prefixes:
+                    for key in item.keys():
+                        if prefix in key and postfix in key:
+                            if prefix == "ref.":
+                                for idx in range(len(item[key])):
+                                    item[key][idx] = transform(item[key][idx])
+                            else:
+                                item[key] = transform(item[key])
         
         # Add task as a string
         task_idx = item["task_index"].item()
@@ -1163,6 +1166,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
+        use_ref=True,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1180,6 +1184,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,
+                use_ref=use_ref,
             )
             for repo_id in repo_ids
         ]

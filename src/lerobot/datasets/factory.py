@@ -112,6 +112,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
+                use_ref=cfg.policy.use_ref,
             )
             # if cfg.dataset.use_imagenet_stats:
             #     for key in dataset.meta.camera_keys:
@@ -134,7 +135,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 # delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 video_backend=cfg.dataset.video_backend,
-                episodes=cfg.dataset.episodes
+                episodes=cfg.dataset.episodes,
+                use_ref=cfg.policy.use_ref,
             )
             for a_dataset in dataset._datasets:
                 ds_meta = LeRobotDatasetMetadata(a_dataset.repo_id, root=a_dataset.root, revision=a_dataset.revision)

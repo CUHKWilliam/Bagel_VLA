@@ -125,19 +125,22 @@ class MetricsTracker:
         """
         Updates metrics that depend on 'step' for one step.
         """
+            
+        add_tokens = num_token
+        add_steps = 1
+        add_epochs = self._num_episodes / self._num_frames * add_steps
+
+        add_step_all_proc = self.accelerator.gather(torch.tensor(add_steps).cuda())
+        add_steps = add_step_all_proc.sum().detach().cpu().item()
+
+        add_tokens_all_proc = self.accelerator.gather(torch.tensor(add_tokens).cuda())
+        add_tokens = add_tokens_all_proc.sum().detach().cpu().item()
+        
+        self.tokens += add_tokens
+        self.steps += add_steps
+
         self.epochs = self._num_episodes / self._num_frames * self.steps
-        self.tokens += num_token
-        self.steps += 1
 
-        step_all_proc = self.accelerator.gather(torch.tensor(self.steps).cuda())
-        self.steps = step_all_proc.sum().detach().cpu().item()
-        
-        epochs_all_proc = self.accelerator.gather(torch.tensor(self.epochs).cuda())
-        self.epochs = epochs_all_proc.sum().detach().cpu().item()
-
-        tokens_all_proc = self.accelerator.gather(torch.tensor(self.tokens).cuda())
-        self.tokens = tokens_all_proc.sum().detach().cpu().item()
-        
         for k in self.metrics.keys():
             if isinstance(self.metrics[k], AverageMeter):
                 v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].avg).float().cuda())
