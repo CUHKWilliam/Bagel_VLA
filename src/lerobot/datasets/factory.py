@@ -80,7 +80,17 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+class ConcatDatasetWithIndex(torch.utils.data.ConcatDataset):
+    def __init__(self, *inputs):
+        super().__init__(inputs)
+
+    def __getitem__(self, index):
+        data = super().__getitem__(index)
+        data['data_index'] = data
+        return data
+        
+
+def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -202,10 +212,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     for ds in all_datasets:
         num_frames += ds.num_frames
         num_episodes += ds.num_episodes
-    dataset = torch.utils.data.ConcatDataset(all_datasets)
+    dataset = ConcatDatasetWithIndex(all_datasets)
     dataset.num_frames = num_frames
     dataset.num_episodes = num_episodes
-    sample_weights_cache_path = os.path.join(cfg.output_dir, "sample_weights_cache.pkl")
+    
     val_sample_weights_dict = {}
     dataset_types = []
     sample_weights = []
@@ -223,4 +233,5 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         val_sample_weights_dict[dataset_type][val_data_idx_same_t] = train_sample_weights[val_data_idx_same_t]
         train_sample_weights[val_data_idx_same_t] = 0.0
     train_sample_weights = np.array(train_sample_weights)
-    return dataset, sample_weights, val_sample_weights_dict
+
+    return dataset, train_sample_weights, val_sample_weights_dict

@@ -66,7 +66,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     push_to_hub: bool = True
     repo_id: str | None = None
-
+    
+    model_size: float | None = None 
     # Upload on private repository on the Hugging Face hub.
     private: bool | None = None
     # Add tags to your policy on the hub.

@@ -68,14 +68,20 @@ import multiprocessing
 class CustomWeightedRandomSampler(WeightedRandomSampler):
     """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
     def __init__(self, *args, **kwargs):
+        self.accelerator = kwargs.pop('accelerator')
         super().__init__(*args, **kwargs)
+        self.rand_tensor = None
 
     def __iter__(self):
+        for idx in range(self.accelerator.num_processes):
+            if idx != self.accelerator.process_index:
+                self.weights[self.accelerator.process_index::self.accelerator.num_processes] = 0
         rand_tensor = np.random.choice(range(0, len(self.weights)),
                                        size=self.num_samples,
                                        p=self.weights.numpy() / torch.sum(self.weights).numpy(),
                                        replace=self.replacement)
         rand_tensor = torch.from_numpy(rand_tensor)
+        self.rand_tensor = rand_tensor
         return iter(rand_tensor.tolist())
 
 
@@ -174,14 +180,8 @@ def train(cfg: TrainPipelineConfig):
     # Create dataset
     if accelerator.is_main_process:
         logging.info("Creating dataset")
-    dataset, train_sample_weights, val_sample_weights_dict = make_dataset(cfg)
-    sample_weights_cache_path = os.path.join(cfg.output_dir, "sample_weights_cache.pkl")
-    if not os.path.exists(sample_weights_cache_path):
-        if accelerator.is_main_process:
-            pickle.dump([train_sample_weights, val_sample_weights_dict],open(sample_weights_cache_path, 'wb'))
-        accelerator.wait_for_everyone()
-        torch.cuda.synchronize()
-    train_sample_weights, val_sample_weights_dict = pickle.load(open(sample_weights_cache_path, "rb"))
+    dataset, train_sample_weights, val_sample_weights_dict = make_dataset(cfg, accelerator)
+    
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -247,8 +247,10 @@ def train(cfg: TrainPipelineConfig):
     else:
         shuffle = True
         sampler = None
-    train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights))
-
+    if cfg.resume:
+        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+        step, tokens, _, _, train_sample_weights, val_sample_weights_dict = load_training_state(checkpoint_path, None, None)
+    train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights), accelerator=accelerator)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=10, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
@@ -265,10 +267,6 @@ def train(cfg: TrainPipelineConfig):
             except:
                 return p.numel()
         return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
-    
-    if cfg.resume:
-        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
-        step, tokens, _, _ = load_training_state(checkpoint_path, None, None)
     
     # Prepare for distributed training
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
@@ -319,7 +317,8 @@ def train(cfg: TrainPipelineConfig):
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        data_batch = next(seq_dataloader)
+        data_batch, data_indexes = next(seq_dataloader)
+        import ipdb;ipdb.set_trace()
         train_tracker.dataloading_s = time.perf_counter() - start_time
         train_tracker, output_dict = update_policy(
                 train_tracker,
@@ -333,11 +332,14 @@ def train(cfg: TrainPipelineConfig):
         # increment `step` here.
         step += 1
         num_tokens = data_batch['sequence_length']
+        if tokens <= cfg.dataset.token_num:
+            train_sample_weights[] = 0
         tokens += num_tokens
-        train_tracker.step(num_tokens)
-        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
-        is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        num_tokens, step = train_tracker.step(num_tokens)
+
+        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq < accelerator.num_processes
+        is_saving_step = step % cfg.save_freq < accelerator.num_processes or step - cfg.steps < accelerator.num_processes
+        is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq < accelerator.num_processes
         if is_log_step and accelerator.is_main_process:
             print("logging.....")
             logging.info(train_tracker)
@@ -364,7 +366,7 @@ def train(cfg: TrainPipelineConfig):
             # Unwrap model for saving
             unwrapped_policy = accelerator.unwrap_model(policy)
             if accelerator.is_main_process:
-                save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler)
+                save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler, train_sample_weights, val_sample_weights_dict)
                 update_last_checkpoint(checkpoint_dir)
         
         if cfg.save_checkpoint and is_saving_step:
@@ -389,7 +391,8 @@ def train(cfg: TrainPipelineConfig):
                 all_loss_values = torch.tensor(0.).float().cuda()
                 all_mse_values = torch.tensor(0.).float().cuda()
                 all_ce_values = torch.tensor(0.).float().cuda()
-                val_sampler = torch.utils.data.WeightedRandomSampler(weights=val_sample_weights_dict[ds_type], num_samples=len(train_sample_weights))
+                # val_sampler = torch.utils.data.WeightedRandomSampler(weights=val_sample_weights_dict[ds_type], num_samples=len(train_sample_weights))
+                val_sampler = CustomWeightedRandomSampler(weights=val_sample_weights_dict[ds_type], num_samples=len(val_sample_weights_dict[ds_type]), accelerator=accelerator)
                 val_dataloader = torch.utils.data.DataLoader(
                     dataset,
                     num_workers=0, # cfg.num_workers, ## TODO: set worker

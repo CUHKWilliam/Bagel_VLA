@@ -151,7 +151,7 @@ class MetricsTracker:
                 self.metrics[k].count = v_all_proc.sum().detach().cpu().item()
                 v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].val).float().cuda())
                 self.metrics[k].val = v_all_proc.mean().detach().cpu().item()
-
+        return self.tokens, self.steps
     def __str__(self) -> str:
         
         display_list = [

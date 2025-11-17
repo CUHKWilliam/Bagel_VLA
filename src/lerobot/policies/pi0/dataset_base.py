@@ -677,6 +677,7 @@ class PackedDataset:
                 except StopIteration:
                     dl_iter = iter(dataloader)
                     batch = next(dl_iter)
+                data_index = batch.pop('data_index')
                 if "action" in batch.keys():
                     actions = batch["action"]
                     act_ids = tokenize_action(actions)
@@ -705,8 +706,9 @@ class PackedDataset:
                 sequence_status = self.set_sequence_status()
                 batch_data_indexes = []
             sequence_status = self.pack_sequence(sample, sequence_status)
+            batch_data_indexes.append(data_index)
             continue
-        return sequence_status
+        return sequence_status, batch_data_indexes
 
     def pack_sequence(self, sample, sequence_status):
         image_tensor_list = sample['image_tensor_list']
