@@ -847,10 +847,25 @@ class PI0FlowMatching(nn.Module):
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
                 param.requires_grad = True
-            # for layer_idx in range(23):
-            #     for n, p in bagel_model.language_model.model.layers[layer_idx].named_parameters():
-            #         p.requires_grad = False
-
+            
+            def get_model_param_count(model, trainable_only=False):
+                def numel(p):
+                    try:
+                        return p.ds_numel
+                    except:
+                        return p.numel()
+                return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
+            
+            unfixed_num_params = 0
+            for layer_idx in range(len(bagel_model.language_model.model.layers)):
+                num_params = get_model_param_count(bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1])
+                if unfixed_num_params < config.model_size * 1e9:
+                    for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
+                        p.requires_grad = True
+                else:
+                    for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
+                        p.requires_grad = False
+                unfixed_num_params += num_params
             if training_args.freeze_vae and training_args.visual_gen:
                 for param in vae_model.parameters():
                     param.requires_grad = False

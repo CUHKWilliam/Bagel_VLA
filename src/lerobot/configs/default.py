@@ -39,7 +39,7 @@ class DatasetConfig:
     video_backend: str = field(default_factory=get_safe_default_codec)
     vqa_repo_id: str | None = None
     video_repo_id: str | None = None
-    token_num: str | None = None
+    token_num: int | None = None
 
 @dataclass
 class WandBConfig:

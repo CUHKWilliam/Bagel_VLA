@@ -77,6 +77,7 @@ def save_checkpoint(
     scheduler: LRScheduler | None = None,
     train_sample_weights = None,
     val_sample_weights_dict = None,
+    train_sample_seen = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -104,7 +105,7 @@ def save_checkpoint(
     cfg.save_pretrained(pretrained_dir)
     save_training_state(checkpoint_dir, step, tokens, optimizer, scheduler)
     sample_weights_cache_path = os.path.join(checkpoint_dir, "sample_weights_cache.pkl")
-    pickle.dump([train_sample_weights, val_sample_weights_dict],open(sample_weights_cache_path, 'wb'))
+    pickle.dump([train_sample_weights, val_sample_weights_dict, train_sample_seen],open(sample_weights_cache_path, 'wb'))
 
 
 def save_training_state(
@@ -170,5 +171,5 @@ def load_training_state(
         except:
             print('scheduler load fail')
     sample_weights_cache_path = os.path.join(checkpoint_dir, "sample_weights_cache.pkl")
-    train_sample_weights, val_sample_weights_dict = pickle.load(open(sample_weights_cache_path, 'rb'))
-    return step, tokens, optimizer, scheduler, train_sample_weights, val_sample_weights_dict
+    train_sample_weights, val_sample_weights_dict, train_sample_seen = pickle.load(open(sample_weights_cache_path, 'rb'))
+    return step, tokens, optimizer, scheduler, train_sample_weights, val_sample_weights_dict, train_sample_seen

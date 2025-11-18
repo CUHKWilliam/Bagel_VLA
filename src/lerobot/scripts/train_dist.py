@@ -236,6 +236,7 @@ def train(cfg: TrainPipelineConfig):
 
     step = 0  # number of policy updates (forward + backward + optim)
     tokens = 0
+    train_sample_seen = np.zeros_like(train_sample_weights).astype(np.float32)
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
@@ -249,11 +250,11 @@ def train(cfg: TrainPipelineConfig):
         sampler = None
     if cfg.resume:
         checkpoint_path = cfg.output_dir / "checkpoints" / "last"
-        step, tokens, _, _, train_sample_weights, val_sample_weights_dict = load_training_state(checkpoint_path, None, None)
+        step, tokens, _, _, train_sample_weights, val_sample_weights_dict, train_sample_seen = load_training_state(checkpoint_path, None, None)
     train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights), accelerator=accelerator)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=10, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
+        num_workers=0, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
         batch_size=1,
         # shuffle=shuffle,
         sampler=train_sampler,
@@ -285,10 +286,10 @@ def train(cfg: TrainPipelineConfig):
         if cfg.env is not None:
             logging.info(f"{cfg.env.task=}")
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
-        num_datasets = len(dataset.datasets)
+        num_datasets = len(dataset.ds.datasets)
         logging.info("============ Dataset Recipe =================")
         for dataset_idx in range(num_datasets):
-            ds = dataset.datasets[dataset_idx]
+            ds = dataset.ds.datasets[dataset_idx]
             logging.info(f"{ds.repo_id=}: {ds.num_frames=} ({format_big_number(ds.num_frames)}) {ds.num_episodes=} ({format_big_number(ds.num_episodes)}) {ds.weight=} {ds.ds_type=}")
         logging.info("============ Dataset Recipe End =================")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
@@ -314,11 +315,9 @@ def train(cfg: TrainPipelineConfig):
         logging.info("Start offline training on a fixed dataset")
     # Create iterator from dataloader
     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
-
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         data_batch, data_indexes = next(seq_dataloader)
-        import ipdb;ipdb.set_trace()
         train_tracker.dataloading_s = time.perf_counter() - start_time
         train_tracker, output_dict = update_policy(
                 train_tracker,
@@ -330,16 +329,35 @@ def train(cfg: TrainPipelineConfig):
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
+
+        if tokens <= cfg.dataset.token_num:
+            train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
+        
         step += 1
         num_tokens = data_batch['sequence_length']
-        if tokens <= cfg.dataset.token_num:
-            train_sample_weights[] = 0
         tokens += num_tokens
         num_tokens, step = train_tracker.step(num_tokens)
 
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq < accelerator.num_processes
         is_saving_step = step % cfg.save_freq < accelerator.num_processes or step - cfg.steps < accelerator.num_processes
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq < accelerator.num_processes
+
+        if cfg.save_checkpoint and is_saving_step:
+            accelerator.wait_for_everyone()
+
+        if cfg.save_checkpoint and is_saving_step:
+            logging.info(f"Checkpoint policy after step {step}")
+            checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
+            unwrapped_policy = accelerator.unwrap_model(policy)
+            train_sample_seen_all_proc = self.accelerator.gather(torch.tensor(train_sample_seen).cuda())
+            import ipdb;ipdb.set_trace()
+            if accelerator.is_main_process:
+                save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler, train_sample_weights, val_sample_weights_dict, train_sample_seen)
+                update_last_checkpoint(checkpoint_dir)
+        if cfg.save_checkpoint and is_saving_step:
+            accelerator.wait_for_everyone()
+
+
         if is_log_step and accelerator.is_main_process:
             print("logging.....")
             logging.info(train_tracker)
@@ -357,21 +375,6 @@ def train(cfg: TrainPipelineConfig):
                 wandb_logger.log_dict(wandb_log_dict, step=tokens)
             train_tracker.reset_averages()
         
-        if cfg.save_checkpoint and is_saving_step:
-            accelerator.wait_for_everyone()
-
-        if cfg.save_checkpoint and is_saving_step:
-            logging.info(f"Checkpoint policy after step {step}")
-            checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            # Unwrap model for saving
-            unwrapped_policy = accelerator.unwrap_model(policy)
-            if accelerator.is_main_process:
-                save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler, train_sample_weights, val_sample_weights_dict)
-                update_last_checkpoint(checkpoint_dir)
-        
-        if cfg.save_checkpoint and is_saving_step:
-            accelerator.wait_for_everyone()
-
         if is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")

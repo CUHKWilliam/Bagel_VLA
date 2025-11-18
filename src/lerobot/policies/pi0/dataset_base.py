@@ -702,7 +702,7 @@ class PackedDataset:
             if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
                 print(f"Yielding data with length {sum(sequence_status['sample_lens'])}")
                 data = self.to_tensor(sequence_status)
-                yield data
+                yield data, batch_data_indexes
                 sequence_status = self.set_sequence_status()
                 batch_data_indexes = []
             sequence_status = self.pack_sequence(sample, sequence_status)

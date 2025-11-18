@@ -41,6 +41,7 @@ import numpy as np
 import copy
 import pickle
 import os
+from torch.utils.data import ConcatDataset, Dataset
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -80,15 +81,17 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-class ConcatDatasetWithIndex(torch.utils.data.ConcatDataset):
-    def __init__(self, *inputs):
-        super().__init__(inputs)
+class ConcatDatasetWithIndex(Dataset):
+    def __init__(self, inputs):
+        self.ds = ConcatDataset(inputs)
 
     def __getitem__(self, index):
-        data = super().__getitem__(index)
-        data['data_index'] = data
+        data = self.ds.__getitem__(index)
+        data['data_index'] = index
         return data
-        
+    
+    def __len__(self, ):
+        return len(self.dataset)
 
 def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
@@ -213,13 +216,14 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | Mult
         num_frames += ds.num_frames
         num_episodes += ds.num_episodes
     dataset = ConcatDatasetWithIndex(all_datasets)
+    # dataset = ConcatDataset(all_datasets)
     dataset.num_frames = num_frames
     dataset.num_episodes = num_episodes
     
     val_sample_weights_dict = {}
     dataset_types = []
     sample_weights = []
-    for a_dataset in dataset.datasets:
+    for a_dataset in dataset.ds.datasets:
         sample_weights += [a_dataset.weight] * a_dataset.__len__()
         dataset_types += [a_dataset.ds_type] * a_dataset.__len__()
     sample_weights = np.array(sample_weights)
