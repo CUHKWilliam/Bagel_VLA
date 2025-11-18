@@ -409,6 +409,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                                 a_ref_action,
                                 need_loss=False,
                             )
+        import ipdb;ipdb.set_trace()
         for key in sorted_sample_keys:
             if "images." in key and "observation" in key:
                 data = self._add_image(

@@ -795,7 +795,7 @@ class PI0FlowMatching(nn.Module):
 
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             ## TODO:
-            llm_config.num_hidden_layers = 10
+            # llm_config.num_hidden_layers = 10
 
             llm_config.layer_module = model_args.layer_module
             llm_config.qk_norm = model_args.llm_qk_norm
@@ -852,7 +852,7 @@ class PI0FlowMatching(nn.Module):
             self.tokenizer = tokenizer
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
-                param.requires_grad = True
+                param.requires_grad = False
             
             def get_model_param_count(model, trainable_only=False):
                 def numel(p):
@@ -865,10 +865,10 @@ class PI0FlowMatching(nn.Module):
             unfixed_num_params = 0
             for layer_idx in range(len(bagel_model.language_model.model.layers)):
                 num_params = get_model_param_count(bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1])
-                unfixed_num_params += num_params
                 if unfixed_num_params < config.model_size * 1e9:
                     for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
                         p.requires_grad = True
+                    unfixed_num_params += num_params
                 else:
                     for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
                         p.requires_grad = False
