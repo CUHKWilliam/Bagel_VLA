@@ -56,7 +56,7 @@ def save_training_step(step: int, tokens: int, save_dir: Path) -> None:
 
 def load_training_step(save_dir: Path) -> int:
     training_step = load_json(save_dir / TRAINING_STEP)
-    return training_step["step"], trainng_step['tokens']
+    return training_step["step"], training_step['tokens']
 
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
@@ -106,7 +106,6 @@ def save_checkpoint(
     save_training_state(checkpoint_dir, step, tokens, optimizer, scheduler)
     sample_weights_cache_path = os.path.join(checkpoint_dir, "sample_weights_cache.pkl")
     pickle.dump([train_sample_weights, val_sample_weights_dict, train_sample_seen],open(sample_weights_cache_path, 'wb'))
-    import ipdb;ipdb.set_trace()
 
 def save_training_state(
     checkpoint_dir: Path,

@@ -330,9 +330,8 @@ def train(cfg: TrainPipelineConfig):
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
 
-        if tokens <= cfg.dataset.token_num:
+        if tokens <= cfg.dataset.token_num * 1e9:
             train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
-        
         step += 1
         num_tokens = data_batch['sequence_length']
         tokens += num_tokens

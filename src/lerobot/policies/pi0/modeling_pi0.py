@@ -795,7 +795,7 @@ class PI0FlowMatching(nn.Module):
 
             llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
             ## TODO:
-            # llm_config.num_hidden_layers = 4
+            llm_config.num_hidden_layers = 10
 
             llm_config.layer_module = model_args.layer_module
             llm_config.qk_norm = model_args.llm_qk_norm
