@@ -343,12 +343,12 @@ def train(cfg: TrainPipelineConfig):
 
         if cfg.save_checkpoint and is_saving_step:
             accelerator.wait_for_everyone()
-
+        
         if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             unwrapped_policy = accelerator.unwrap_model(policy)
-            train_sample_seen = torch.stack(accelerator.gather([torch.tensor(train_sample_seen).cuda()])).any(0).int()
+            train_sample_seen = accelerator.gather(torch.tensor(train_sample_seen).cuda()[None, :]).any(0).float()
             if accelerator.is_main_process:
                 save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler, train_sample_weights, val_sample_weights_dict, train_sample_seen)
                 update_last_checkpoint(checkpoint_dir)
