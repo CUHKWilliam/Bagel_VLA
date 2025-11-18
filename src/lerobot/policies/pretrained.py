@@ -129,6 +129,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+        import ipdb;ipdb.set_trace()
         if packaging.version.parse(safetensors.__version__) < packaging.version.parse("0.4.3"):
             load_model_as_safetensor(model, model_file, strict=strict)
             if map_location != "cpu":

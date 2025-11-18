@@ -33,8 +33,8 @@ from lerobot.optim.optimizers import load_optimizer_state, save_optimizer_state
 from lerobot.optim.schedulers import load_scheduler_state, save_scheduler_state
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.random_utils import load_rng_state, save_rng_state
-
-
+import os
+import pickle
 def log_output_dir(out_dir):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {out_dir}")
 
@@ -83,7 +83,7 @@ def save_checkpoint(
 
     005000/  #  training step at checkpoint
     ├── pretrained_model/
-    │   ├── config.json  # policy config
+     config.json  # policy config
     │   ├── model.safetensors  # policy weights
     │   └── train_config.json  # train config
     └── training_state/
@@ -106,7 +106,7 @@ def save_checkpoint(
     save_training_state(checkpoint_dir, step, tokens, optimizer, scheduler)
     sample_weights_cache_path = os.path.join(checkpoint_dir, "sample_weights_cache.pkl")
     pickle.dump([train_sample_weights, val_sample_weights_dict, train_sample_seen],open(sample_weights_cache_path, 'wb'))
-
+    import ipdb;ipdb.set_trace()
 
 def save_training_state(
     checkpoint_dir: Path,

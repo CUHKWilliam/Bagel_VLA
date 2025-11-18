@@ -339,7 +339,7 @@ def train(cfg: TrainPipelineConfig):
         num_tokens, step = train_tracker.step(num_tokens)
 
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq < accelerator.num_processes
-        is_saving_step = step % cfg.save_freq < accelerator.num_processes or step - cfg.steps < accelerator.num_processes
+        is_saving_step = step % cfg.save_freq < accelerator.num_processes or abs(step - cfg.steps) < accelerator.num_processes
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq < accelerator.num_processes
 
         if cfg.save_checkpoint and is_saving_step:
@@ -349,8 +349,7 @@ def train(cfg: TrainPipelineConfig):
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             unwrapped_policy = accelerator.unwrap_model(policy)
-            train_sample_seen_all_proc = self.accelerator.gather(torch.tensor(train_sample_seen).cuda())
-            import ipdb;ipdb.set_trace()
+            train_sample_seen = torch.stack(accelerator.gather([torch.tensor(train_sample_seen).cuda()])).any(0).int()
             if accelerator.is_main_process:
                 save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler, train_sample_weights, val_sample_weights_dict, train_sample_seen)
                 update_last_checkpoint(checkpoint_dir)
@@ -407,7 +406,7 @@ def train(cfg: TrainPipelineConfig):
                 val_seq_dataloader = policy.dataset(val_dataloader, policy.tokenize_action)
                 for val_step in tqdm(range(val_total_steps)):
                     dl_iter = iter(val_seq_dataloader)
-                    val_data_batch = next(dl_iter)          
+                    val_data_batch, _ = next(dl_iter)          
                     with torch.no_grad():
                         loss, output_dict = policy.forward(val_data_batch)
                     loss_value = loss.detach().mean()
