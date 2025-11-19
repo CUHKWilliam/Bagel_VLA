@@ -887,7 +887,6 @@ class PI0FlowMatching(nn.Module):
                 bagel_model.vit_model.eval()
                 for param in bagel_model.vit_model.parameters():
                     param.requires_grad = False
-
             logging.info(f"{unfixed_num_params=} ({format_big_number(unfixed_num_params)})")
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         # self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)

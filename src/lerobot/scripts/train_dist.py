@@ -332,6 +332,8 @@ def train(cfg: TrainPipelineConfig):
 
         if tokens <= cfg.dataset.token_num * 1e9:
             train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
+        else:
+            import ipdb;ipdb.set_trace()
         step += 1
         num_tokens = data_batch['sequence_length']
         tokens += num_tokens
