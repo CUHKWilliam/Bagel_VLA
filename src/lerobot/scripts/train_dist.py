@@ -318,6 +318,7 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         data_batch, data_indexes = next(seq_dataloader)
+        print('data_indexes:', data_indexes)
         train_tracker.dataloading_s = time.perf_counter() - start_time
         train_tracker, output_dict = update_policy(
                 train_tracker,
@@ -329,11 +330,22 @@ def train(cfg: TrainPipelineConfig):
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
-
         if tokens <= cfg.dataset.token_num * 1e9:
             train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
         else:
-            import ipdb;ipdb.set_trace()
+            train_sample_seen = accelerator.gather(torch.tensor(train_sample_seen).cuda()[None, :]).any(0).float().cpu().numpy()
+            train_sample_weights[np.where(train_sample_seen != 1)[0]] *= 0
+            train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights), accelerator=accelerator)
+            dataloader = torch.utils.data.DataLoader(
+                dataset,
+                num_workers=0, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
+                batch_size=1,
+                # shuffle=shuffle,
+                sampler=train_sampler,
+                pin_memory=False,
+                drop_last=False,
+            )
+            seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
         step += 1
         num_tokens = data_batch['sequence_length']
         tokens += num_tokens
