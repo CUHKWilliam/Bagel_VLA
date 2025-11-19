@@ -852,7 +852,7 @@ class PI0FlowMatching(nn.Module):
             self.tokenizer = tokenizer
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
-                param.requires_grad = False
+                param.requires_grad = True
             
             def get_model_param_count(model, trainable_only=False):
                 def numel(p):
@@ -888,6 +888,9 @@ class PI0FlowMatching(nn.Module):
                 for param in bagel_model.vit_model.parameters():
                     param.requires_grad = False
             logging.info(f"{unfixed_num_params=} ({format_big_number(unfixed_num_params)})")
+            for n, p in bagel_model.named_parameters():
+                if 'time_embedder' in n or 'vae2llm' in n or'latent_pos_embed' in n or 'connector' in n or 'vit_pos_embed' in n or "llm2vae" in n or 'embed_tokens' in n:
+                    p.requires_grad = False
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         # self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
         # self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
