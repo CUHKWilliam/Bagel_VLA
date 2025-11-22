@@ -11,7 +11,7 @@ src/lerobot/scripts/train_dist.py \
 --policy.repo_id="lerobot/pi0" \
 --eval_freq=100 \
 --save_freq=10000 \
---job_name="act-und-gen-ratio-1-0-1_model-und_data-tok-${TOKEN_NUM}G_model-param-${MODEL_SIZE}B_debug" \
+--job_name="act-und-gen-ratio-1-0-1_model-und_data-tok-${TOKEN_NUM}G_model-param-${MODEL_SIZE}B" \
 --wandb.project="exp_scaling_law_libero" \
 --policy.use_ref false \
 --policy.type="pi0"
