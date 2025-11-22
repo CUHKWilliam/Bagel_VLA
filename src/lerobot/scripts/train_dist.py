@@ -440,9 +440,9 @@ def train(cfg: TrainPipelineConfig):
                     f"{ds_type}_ce": AverageMeter("ce", ":.3f"),
                     f"{ds_type}_mse": AverageMeter("mse", ":.3f"),
                 })
-                val_loss_dict[f'{ds_type}_loss'] = mse_loss_value
+                val_loss_dict[f'{ds_type}_loss'] = loss_value
                 val_loss_dict[f'{ds_type}_ce'] = ce_loss_value
-                val_loss_dict[f'{ds_type}_mse'] = loss_value
+                val_loss_dict[f'{ds_type}_mse'] = mse_loss_value
             validation_tracker = MetricsTracker(
                 dataset.num_frames, dataset.num_episodes, validation_metrics, accelerator=accelerator
             )

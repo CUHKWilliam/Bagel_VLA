@@ -135,7 +135,6 @@ class WandBLogger:
                 continue
             if self.accelerator.is_main_process:
                 self._wandb.log(data={f"{mode}/{k}":v}, step=step)
-
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
