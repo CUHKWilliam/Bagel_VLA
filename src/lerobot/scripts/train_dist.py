@@ -64,6 +64,8 @@ from lerobot.configs.train import TrainPipelineConfig
 from torch.utils.data import WeightedRandomSampler
 import pickle
 import multiprocessing
+import wandb
+wandb.login()
 
 class CustomWeightedRandomSampler(WeightedRandomSampler):
     """WeightedRandomSampler except allows for more than 2^24 samples to be sampled"""
@@ -104,8 +106,10 @@ def update_policy(
     loss_value = accelerator.gather(loss.detach()).mean().item()
     mse = output_dict['mse']
     ce = output_dict['ce']
-    mse_loss_value = accelerator.gather(mse.detach()).mean().item()
-    ce_loss_value = accelerator.gather(ce.detach()).mean().item()
+    mse_loss_value = mse.detach().mean().item()
+    ce_loss_value = ce.detach().mean().item()
+    # mse_loss_value = accelerator.gather(mse.detach()).mean().item()
+    # ce_loss_value = accelerator.gather(ce.detach()).mean().item()
 
     # grad_norm_value = accelerator.gather(grad_norm).mean().item()
 
@@ -432,9 +436,13 @@ def train(cfg: TrainPipelineConfig):
                     all_mse_values += mse / val_total_steps
                     all_ce_values += ce / val_total_steps
 
-                mse_loss_value = accelerator.gather(all_mse_values.detach()).mean().item()
-                ce_loss_value = accelerator.gather(all_ce_values.detach()).mean().item()
-                loss_value = accelerator.gather(all_loss_values.detach()).mean().item()
+                # mse_loss_value = accelerator.gather(all_mse_values.detach()).mean().item()
+                # ce_loss_value = accelerator.gather(all_ce_values.detach()).mean().item()
+                # loss_value = accelerator.gather(all_loss_values.detach()).mean().item()
+                ce_loss_value = all_loss_values.detach().mean().item()
+                mse_loss_value = all_mse_values.detach().mean().item()
+                loss_value = all_loss_values.detach().mean().item()
+
                 validation_metrics.update({
                     f"{ds_type}_loss": AverageMeter("loss", ":3f"),
                     f"{ds_type}_ce": AverageMeter("ce", ":.3f"),
@@ -452,7 +460,7 @@ def train(cfg: TrainPipelineConfig):
             val_tracker_dict = validation_tracker.to_dict() 
             wandb_log_dict = {**val_tracker_dict}
             if wandb_logger:
-                wandb_logger.log_dict(wandb_log_dict, step=tokens, mode="validation")
+                wandb_logger.log_dict(wandb_log_dict, step=step, mode="validation")
 
 
         if False:

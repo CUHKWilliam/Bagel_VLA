@@ -472,7 +472,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                 data = self._add_image(
                     data, 
                     pil_img2rgb(Image.fromarray(next_images)),
-                    need_loss=True, 
+                    need_loss=False, ## TODO:no grad now 
                     need_vae=False, 
                     need_vit=True, 
                 )

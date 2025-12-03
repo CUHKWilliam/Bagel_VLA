@@ -140,7 +140,7 @@ class MetricsTracker:
         self.steps += add_steps
 
         self.epochs = self._num_episodes / self._num_frames * self.steps
-
+        '''
         for k in self.metrics.keys():
             if isinstance(self.metrics[k], AverageMeter):
                 v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].avg).float().cuda())
@@ -151,7 +151,10 @@ class MetricsTracker:
                 self.metrics[k].count = v_all_proc.sum().detach().cpu().item()
                 v_all_proc = self.accelerator.gather(torch.tensor(self.metrics[k].val).float().cuda())
                 self.metrics[k].val = v_all_proc.mean().detach().cpu().item()
-                
+                if torch.isnan(torch.tensor(self.metrics[k].val)).any() or torch.isinf(torch.tensor(self.metrics[k].val)).any():
+                    print(v_all_proc, k)
+                    import ipdb;ipdb.set_trace()
+        '''
         return self.tokens, self.steps
     def __str__(self) -> str:
         

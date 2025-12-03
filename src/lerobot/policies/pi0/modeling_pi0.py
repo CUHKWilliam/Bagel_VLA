@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -126,12 +124,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=3000,
+        default=5000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=3000,
+        default=5000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -225,7 +223,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -527,7 +525,7 @@ class PI0Policy(PreTrainedPolicy):
             use_ref=self.config.use_ref,
         )
         fast_tokenizer_path = "physical-intelligence/fast"
-        self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True)
+        self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True, )
         self.pad_token_id = (
             self.model.tokenizer.pad_token_id
             if hasattr(self.model.tokenizer, "pad_token_id")
@@ -995,7 +993,6 @@ class PI0FlowMatching(nn.Module):
             visual_gen_complete = np.random.rand() < 0.5
         else:
             visual_gen_complete = 1
-            
         if get_time:
             torch.cuda.synchronize()
             t = Time.time()
@@ -1012,8 +1009,8 @@ class PI0FlowMatching(nn.Module):
         loss = torch.tensor(0).float().cuda()
         if ret['ce'] is not None and "ce_loss_indexes" in data_batch.keys():
             ce = ret['ce']
-            if self.bagel_model.config.visual_gen and "mse_loss_indexes" in data_batch.keys() and not visual_gen_complete:
-                ce = ce.detach()
+            # if self.bagel_model.config.vi sual_gen and "mse_loss_indexes" in data_batch.keys() and not visual_gen_complete:
+            #     ce = ce.detach()
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes'])).cuda()
             if training_args.ce_loss_reweighting:
                 ce = ce * ce_loss_weights

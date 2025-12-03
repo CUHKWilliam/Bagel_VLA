@@ -309,8 +309,8 @@ class Bagel(PreTrainedModel):
             packed_timesteps = torch.sigmoid(packed_timesteps)
             packed_timesteps = self.timestep_shift * packed_timesteps / (1 + (self.timestep_shift - 1) * packed_timesteps)
             ## TODO:
-            if visual_gen_complete:
-                packed_timesteps *= 0.3
+            # if visual_gen_complete:
+            #     packed_timesteps *= 0.3
             packed_latent = (1 - packed_timesteps[:, None]) * packed_latent_clean + packed_timesteps[:, None] * noise
             packed_timestep_embeds = self.time_embedder(packed_timesteps)
             latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
