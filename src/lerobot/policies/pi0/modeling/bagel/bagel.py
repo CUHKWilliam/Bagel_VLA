@@ -336,7 +336,7 @@ class Bagel(PreTrainedModel):
         )
 
         mse = torch.tensor(0.).float().cuda()
-        if self.config.visual_gen and padded_latent is not None:
+        if self.config.visual_gen and padded_latent is not None and len(mse_loss_indexes) > 0:
             packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
             target = noise - packed_latent_clean # NOTE: v_t=dx_t/dt=x_1-x_0, pointing from data to noise
             has_mse = packed_timesteps > 0

@@ -111,7 +111,7 @@ def autocast(data_batch, dtype1, dtype2):
 @dataclass
 class DataArguments:
     dataset_config_file: str = field(
-        default="data/configs/example.yaml",
+        default="/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/data/configs/example.yaml",
         metadata={"help": "YAML file specifying dataset groups, weights, and preprocessing rules."}
     )
     prefetch_factor: int = field(
@@ -147,7 +147,7 @@ class DataArguments:
 @dataclass
 class ModelArguments:
     model_path: str = field(
-        default="models/BAGEL-7B-MoT",
+        default="/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/models/BAGEL-7B-MoT",
         metadata={"help": "Path of the pretrained BAGEL model."}
     )
     llm_path: str = field(
@@ -223,7 +223,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -1027,7 +1027,7 @@ class PI0FlowMatching(nn.Module):
         if self.bagel_model.config.visual_gen and "mse_loss_indexes" in data_batch.keys():
             total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
             mse = ret['mse'].clone()
-            mse = mse.mean(dim=-1).sum() / total_mse_tokens
+            mse = mse.mean(dim=-1).sum() / (total_mse_tokens + 0.01)
             loss_dict["mse"] = mse.detach()
             loss = loss + mse * self.bagel_model.config.mse_weight
         else:
