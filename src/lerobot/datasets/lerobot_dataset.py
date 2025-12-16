@@ -73,6 +73,7 @@ from lerobot.datasets.video_utils import (
     get_video_info,
 )
 import torchvision.transforms as transforms
+import time
 
 CODEBASE_VERSION = "v2.1"
 
@@ -682,7 +683,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
-
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
@@ -715,6 +715,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
+    
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
@@ -1156,6 +1157,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     structure of `LeRobotDataset`.
     """
     weight = 1.0
+    ds_type = "action"
     def __init__(
         self,
         repo_ids: list[str],
