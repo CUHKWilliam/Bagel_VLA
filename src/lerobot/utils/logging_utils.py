@@ -121,14 +121,12 @@ class MetricsTracker:
         else:
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-    def step(self, num_token) -> None:
+    def step(self, num_token, add_steps=1) -> None:
         """
         Updates metrics that depend on 'step' for one step.
         """
             
         add_tokens = num_token
-        add_steps = 1
-        add_epochs = self._num_episodes / self._num_frames * add_steps
 
         add_step_all_proc = self.accelerator.gather(torch.tensor(add_steps).cuda())
         add_steps = add_step_all_proc.sum().detach().cpu().item()
@@ -139,7 +137,7 @@ class MetricsTracker:
         self.tokens += add_tokens
         self.steps += add_steps
 
-        self.epochs = self._num_episodes / self._num_frames * self.steps
+        self.epochs = 1.0  / self._num_frames * self.steps
         '''
         for k in self.metrics.keys():
             if isinstance(self.metrics[k], AverageMeter):
@@ -160,7 +158,7 @@ class MetricsTracker:
         
         display_list = [
             f"step:{format_big_number(self.steps)}",
-            f"epch:{self.epochs:.2f}",
+            f"epch:{self.epochs}",
             f"tok:{format_big_number(self.tokens)}",
             *[str(m) for m in self.metrics.values()],
         ]
