@@ -1,1 +1,0 @@
-CUDA_VISIBLE_DEVICES=0 accelerate launch --config_file accelerate_config_inference.yaml  lerobot/scripts/eval_server.py --policy.path=lerobot/pi0 --dataset.repo_id stack_boxes_dataset --load_bin="./outputs/train/LIBERO_center/checkpoints/last/pytorch_model.bin"

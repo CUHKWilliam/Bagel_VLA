@@ -554,6 +554,13 @@ class PI0Policy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         raise NotImplementedError("Currently not implemented for PI0")
+    
+    @torch.no_grad()
+    def generate_image(self, batch ):
+        self.eval()
+        predict_image = self.model.sample_images(
+            batch, self.dataset.dataset.vit_transform, self.dataset.dataset.transform, self.dataset.tokenizer
+        )
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, prior=None) -> Tensor:
@@ -848,9 +855,7 @@ class PI0FlowMatching(nn.Module):
                 bagel_model.config.llm_config.vocab_size = len(tokenizer)
                 bagel_model.language_model.config.vocab_size = len(tokenizer)
             self.tokenizer = tokenizer
-            # TODO: fix bagel
-            for name, param in bagel_model.named_parameters():
-                param.requires_grad = True
+     
             
             def get_model_param_count(model, trainable_only=False):
                 def numel(p):
@@ -873,6 +878,16 @@ class PI0FlowMatching(nn.Module):
             if training_args.freeze_vae and training_args.visual_gen:
                 for param in vae_model.parameters():
                     param.requires_grad = False
+            
+
+            ## TODO: overwrite the above freeze, train only the generation exp
+            for name, param in bagel_model.named_parameters():
+                if "moe" not in name:
+                    param.requires_grad = False
+
+                else:
+                    param.requires_grad =True
+
             self.vae_model = vae_model
             # if training_args.freeze_llm:
             #     bagel_model.language_model.eval()
@@ -885,7 +900,7 @@ class PI0FlowMatching(nn.Module):
                 bagel_model.vit_model.eval()
                 for param in bagel_model.vit_model.parameters():
                     param.requires_grad = False
-            logging.info(f"{unfixed_num_params=} ({format_big_number(unfixed_num_params)})")
+            # logging.info(f"{unfixed_num_params=} ({format_big_number(unfixed_num_params)})")
             for n, p in bagel_model.named_parameters():
                 if 'time_embedder' in n or 'vae2llm' in n or'latent_pos_embed' in n or 'connector' in n or 'vit_pos_embed' in n or "llm2vae" in n or 'embed_tokens' in n:
                     p.requires_grad = False
@@ -1008,7 +1023,7 @@ class PI0FlowMatching(nn.Module):
         loss_dict = {} 
         loss = torch.tensor(0).float().cuda()
         if ret['ce'] is not None and "ce_loss_indexes" in data_batch.keys():
-            ce = ret['ce']
+            ce = ret['ce'] * 0 ## TODO:
             # if self.bagel_model.config.vi sual_gen and "mse_loss_indexes" in data_batch.keys() and not visual_gen_complete:
             #     ce = ce.detach()
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes'])).cuda()
@@ -1026,7 +1041,7 @@ class PI0FlowMatching(nn.Module):
         
         if self.bagel_model.config.visual_gen and "mse_loss_indexes" in data_batch.keys():
             total_mse_tokens = torch.tensor(len(data_batch['mse_loss_indexes'])).cuda()
-            mse = ret['mse'].clone()
+            mse = ret['mse'].clone() # TODO:
             mse = mse.mean(dim=-1).sum() / (total_mse_tokens + 0.01)
             loss_dict["mse"] = mse.detach()
             loss = loss + mse * self.bagel_model.config.mse_weight
@@ -1036,6 +1051,123 @@ class PI0FlowMatching(nn.Module):
         if get_time:
             loss_dict['time'] = dt
         return loss_dict, loss
+    
+    def sample_images(self, batch, vit_transform, vae_transform, tokenizer):
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        self.dtype = self.state_proj.weight.dtype
+        device = torch.cuda.current_device()
+        new_token_ids = self.new_token_ids
+        if isinstance(new_token_ids, dict):
+            for k, v in new_token_ids.items():
+                if torch.is_tensor(v):
+                    new_token_ids[k] = v.to(device)
+        elif torch.is_tensor(new_token_ids):
+            new_token_ids = new_token_ids.to(device)
+
+        # prefill
+        past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+        newlens = [0]
+        new_rope = [0]
+        observation_images = []
+        for key in sorted(batch.keys(), reverse=True):
+            if "images." in key and "observation" in key:
+                image_np = (batch[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
+                image = Image.fromarray(image_np)
+                if training_args.visual_gen:
+                    resolution = image.size
+                    generation_input, newlens, new_rope = self.bagel_model.prepare_vae_images(
+                        curr_kvlens=newlens,
+                        curr_rope=new_rope,
+                        images=[image],
+                        transforms = vae_transform,
+                        new_token_ids=new_token_ids,
+                    )
+                    for k, v in generation_input.items():
+                        if torch.is_tensor(v):
+                            generation_input[k] = v.to(device)
+                    past_key_values = self.bagel_model.forward_cache_update_vae(self.vae_model, past_key_values, **generation_input)
+                generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
+                    curr_kvlens=newlens,
+                    curr_rope=new_rope,
+                    images=[image],
+                    transforms=vit_transform,
+                    new_token_ids=new_token_ids,
+                )
+
+                for k, v in generation_input.items():
+                    if torch.is_tensor(v):
+                        generation_input[k] = v.to(device)
+                generation_input = autocast(generation_input, torch.float32, self.dtype)
+                past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
+                observation_images.append(image_np)
+        observation_image = cv2.hconcat(observation_images)
+        # observation_image = observation_images[-1]
+        # add text
+        prompt = "Task:" + batch['task'][0] + ". Please predict the next observation and the action."
+        generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
+            curr_kvlens=newlens,
+            curr_rope=new_rope, 
+            prompts=[prompt],
+            tokenizer=tokenizer, 
+            new_token_ids=new_token_ids,
+        )
+        for k, v in generation_input.items():
+            if torch.is_tensor(v):
+                generation_input[k] = v.to(device)
+        past_key_values = self.bagel_model.forward_cache_update_text(past_key_values, **generation_input)
+        image_tensor = vae_transform(Image.fromarray(observation_image))
+        resolution = tuple(vae_transform(Image.fromarray(observation_image)).shape)[1:]
+        generation_input, newlens, new_rope = self.bagel_model.prepare_vae_latent(
+            curr_kvlens=newlens,
+            curr_rope=new_rope, 
+            image_sizes=[resolution], 
+            new_token_ids=new_token_ids,
+        )
+        for k, v in generation_input.items():
+            if torch.is_tensor(v):
+                generation_input[k] = v.to(device)
+        cfg_past_key_values = NaiveCache(self.bagel_model.config.llm_config.num_hidden_layers)
+        cfg_newlens = [0]
+        cfg_new_rope = [0]
+        generation_input_cfg = self.bagel_model.prepare_vae_latent_cfg(
+            curr_kvlens=cfg_newlens,
+            curr_rope=cfg_new_rope, 
+            image_sizes=[resolution],
+        )
+        for k, v in generation_input_cfg.items():
+            if torch.is_tensor(v):
+                generation_input_cfg[k] = v.to(device)
+        num_timesteps = 10 ## TODO: set timesteps here
+        cfg_scale = 4
+        cfg_interval = [0., 1.]
+        timestep_shift = 3.0
+        cfg_renorm_min = 0.0
+        unpacked_latent, past_key_values = self.bagel_model.generate_image(
+            past_key_values=past_key_values,
+            num_timesteps=num_timesteps,
+            cfg_text_scale=cfg_scale,
+            cfg_interval=cfg_interval,
+            cfg_renorm_min=cfg_renorm_min,
+            timestep_shift=timestep_shift,
+            cfg_text_past_key_values=cfg_past_key_values,
+            cfg_text_packed_position_ids=generation_input_cfg["cfg_packed_position_ids"],
+            cfg_text_key_values_lens=generation_input_cfg["cfg_key_values_lens"],
+            cfg_text_packed_query_indexes=generation_input_cfg["cfg_packed_query_indexes"],
+            cfg_text_packed_key_value_indexes=generation_input_cfg["cfg_packed_key_value_indexes"],
+            **generation_input,
+        )
+        image_list = []
+        for latent in unpacked_latent:
+            latent = latent.reshape(1, resolution[0]//16, resolution[1]//16, 2, 2, 16)
+            latent = torch.einsum("nhwpqc->nchpwq", latent)
+            latent = latent.reshape(1, 16, resolution[0]//8, resolution[1]//8)
+            image = self.vae_model.decode(latent.to(device))
+            tmpimage = ((image * 0.5 + 0.5).clamp(0, 1)[0].permute(1, 2, 0) * 255).to(torch.uint8).cpu().numpy()
+            tmpimage = Image.fromarray(tmpimage)
+            image_list.append(tmpimage)
+        predict_images = image_list
+        return predict_images[0], Image.fromarray(observation_image)
+
 
     def sample_actions(self, batch, vit_transform, vae_transform, tokenizer, prior=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""

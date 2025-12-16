@@ -391,7 +391,7 @@ def train(cfg: TrainPipelineConfig):
                 # predict_action = str(output_dict['predict_action'].view(-1).tolist())
                 # gt_action = str(output_dict['gt_action'].tolist())
                 # wandb_log_dict.update({"action": [{"gt_action": gt_action, "predicted_action": predict_action}]})
-                wandb_logger.log_dict(wandb_log_dict, step=tokens)
+                wandb_logger.log_dict(wandb_log_dict, step=step)
             train_tracker.reset_averages()
         
         if is_eval_step:

@@ -91,9 +91,9 @@ class ConcatDatasetWithIndex(Dataset):
         return data
     
     def __len__(self, ):
-        return len(self.dataset)
+        return len(self.ds)
 
-def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:

@@ -415,7 +415,8 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     data,
                     pil_img2rgb(Image.fromarray((sample[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
                     need_loss=False,
-                    need_vae=self.visual_gen,
+                    # need_vae=self.visual_gen, ## TODO:
+                    need_vae=False,
                     need_vit=True,
                 )
         ## For VQA images
@@ -469,6 +470,8 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
             if len(next_images) > 0:
                 # next_images = next_images[-1] ## TODO: select only one image for now
                 next_images = cv2.hconcat(next_images)
+                ## TODO: no next images 
+                #'''
                 data = self._add_image(
                     data, 
                     pil_img2rgb(Image.fromarray(next_images)),
@@ -476,6 +479,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                     need_vae=False, 
                     need_vit=True, 
                 )
+                #'''
         ## For action generation
         if self.action_gen:
             if ACTION in sample.keys():
@@ -699,7 +703,8 @@ class PackedDataset:
                 else:
                     print(f"skip a sample with length {num_tokens}")
                     continue
-            if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
+            if sum(sequence_status['sample_lens']) > 100:
+            # if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
                 print(f"Yielding data with length {sum(sequence_status['sample_lens'])}")
                 data = self.to_tensor(sequence_status)
                 yield data, batch_data_indexes
