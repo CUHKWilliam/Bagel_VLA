@@ -73,6 +73,7 @@ from lerobot.datasets.video_utils import (
     get_video_info,
 )
 import torchvision.transforms as transforms
+import time
 
 CODEBASE_VERSION = "v2.1"
 
@@ -682,7 +683,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
-
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
@@ -715,6 +715,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
+    
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
@@ -1156,6 +1157,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     structure of `LeRobotDataset`.
     """
     weight = 1.0
+    ds_type = "action"
     def __init__(
         self,
         repo_ids: list[str],
@@ -1174,20 +1176,22 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
-        self._datasets = [
-            LeRobotDataset(
-                repo_id,
-                root=self.root / repo_id,
-                episodes=episodes[repo_id] if episodes else None,
-                image_transforms=image_transforms,
-                delta_timestamps=delta_timestamps,
-                tolerance_s=self.tolerances_s[repo_id],
-                download_videos=download_videos,
-                video_backend=video_backend,
-                use_ref=use_ref,
-            )
-            for repo_id in repo_ids
-        ]
+        self._datasets = []
+        for repo_id in repo_ids:
+            if True:
+                self._datasets.append(
+                    LeRobotDataset(
+                        repo_id,
+                        root=self.root / repo_id,
+                        episodes=episodes[repo_id] if episodes else None,
+                        image_transforms=image_transforms,
+                        delta_timestamps=delta_timestamps,
+                        tolerance_s=self.tolerances_s[repo_id],
+                        download_videos=download_videos,
+                        video_backend=video_backend,
+                        use_ref=use_ref,
+                    )
+                )
 
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able

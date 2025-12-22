@@ -91,7 +91,7 @@ class ConcatDatasetWithIndex(Dataset):
         return data
     
     def __len__(self, ):
-        return len(self.dataset)
+        return len(self.ds)
 
 def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
@@ -183,7 +183,7 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | Mult
                 cfg.dataset.vqa_repo_id = repo_id2
             
             dataset = MultiVQADataset(
-                cfg.dataset.vqa_repo,
+                cfg.dataset.vqa_repo_id,
                 transform=image_transforms,
             )
         all_datasets.append(dataset)
@@ -201,11 +201,11 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | Mult
             elif isinstance(cfg.dataset.video_repo_id, list):
                 repo_id2 = []
                 for a_repo_id in cfg.dataset.video_repo_id:
-                    repo_id2 += glob.glob(video_a_repo_id)
+                    repo_id2 += glob.glob(a_repo_id)
                 cfg.dataset.video_repo_id = repo_id2
             
             dataset = MultiVideoDataset(
-                cfg.dataset.video_repo,
+                cfg.dataset.video_repo_id,
                 transform=image_transforms,
             )
         all_datasets.append(dataset)

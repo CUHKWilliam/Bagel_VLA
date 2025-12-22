@@ -111,7 +111,7 @@ def autocast(data_batch, dtype1, dtype2):
 @dataclass
 class DataArguments:
     dataset_config_file: str = field(
-        default="/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/data/configs/example.yaml",
+        default="/mnt/data/code/Bagel_VLA/data/configs/example.yaml",
         metadata={"help": "YAML file specifying dataset groups, weights, and preprocessing rules."}
     )
     prefetch_factor: int = field(
@@ -124,12 +124,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=5000,
+        default=6000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=5000,
+        default=6000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -147,7 +147,7 @@ class DataArguments:
 @dataclass
 class ModelArguments:
     model_path: str = field(
-        default="/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/models/BAGEL-7B-MoT",
+        default="/mnt/data/code/Bagel_VLA/models/BAGEL-7B-MoT",
         metadata={"help": "Path of the pretrained BAGEL model."}
     )
     llm_path: str = field(
@@ -223,7 +223,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(

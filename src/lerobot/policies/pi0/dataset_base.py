@@ -1,7 +1,6 @@
 # Copyright 2025 Bytedance Ltd. and/or its affiliates.
 # SPDX-License-Identifier: Apache-2.0
-
-
+import time
 import random
 import json
 
@@ -472,7 +471,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                 data = self._add_image(
                     data, 
                     pil_img2rgb(Image.fromarray(next_images)),
-                    need_loss=False, ## TODO:no grad now 
+                    need_loss=True, ## TODO:no grad now 
                     need_vae=False, 
                     need_vit=True, 
                 )
@@ -771,7 +770,7 @@ class PackedDataset:
                 sequence_status['packed_vit_token_indexes'].extend(range(curr, curr + num_img_tokens))
                 curr += num_img_tokens
                 curr_split_len += num_img_tokens
-
+                
                 sequence_status['packed_vit_tokens'].append(vit_tokens)
                 sequence_status['vit_token_seqlens'].append(num_img_tokens)
                 sequence_status['packed_vit_position_ids'].append(
@@ -865,7 +864,6 @@ class PackedDataset:
                 sequence_status['packed_timesteps'].extend([timestep] * num_img_tokens)
                 curr += num_img_tokens
                 curr_split_len += num_img_tokens
-
                 # add a <|endofimage|> token
                 sequence_status['packed_text_ids'].append(self.end_of_image)
                 sequence_status['packed_text_indexes'].append(curr)

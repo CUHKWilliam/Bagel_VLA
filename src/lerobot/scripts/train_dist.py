@@ -136,13 +136,13 @@ def train(cfg: TrainPipelineConfig):
 
     from lerobot.utils.wandb_utils import cfg_to_group, get_wandb_run_id_from_filesystem
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    # ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
-        mixed_precision="no",
-        gradient_accumulation_steps=1,
-        log_with="wandb" if cfg.wandb.enable else None,
-        kwargs_handlers=[ddp_kwargs],
-        project_dir=cfg.output_dir,
+        # mixed_precision="no",
+        # gradient_accumulation_steps=1,
+        # log_with="wandb" if cfg.wandb.enable else None,
+        # kwargs_handlers=[ddp_kwargs],
+        # project_dir=cfg.output_dir,
     )
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg, accelerator)
@@ -185,7 +185,7 @@ def train(cfg: TrainPipelineConfig):
     if accelerator.is_main_process:
         logging.info("Creating dataset")
     dataset, train_sample_weights, val_sample_weights_dict = make_dataset(cfg, accelerator)
-    
+     
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
@@ -240,6 +240,7 @@ def train(cfg: TrainPipelineConfig):
 
     step = 0  # number of policy updates (forward + backward + optim)
     tokens = 0
+    onestep = 0
     train_sample_seen = np.zeros_like(train_sample_weights).astype(np.float32)
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
@@ -258,11 +259,11 @@ def train(cfg: TrainPipelineConfig):
     train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights), accelerator=accelerator)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=0, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
+        num_workers=8, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
         batch_size=1,
-        # shuffle=shuffle,
-        sampler=train_sampler,
-        pin_memory=False,
+        shuffle=False,
+        # sampler=train_sampler,
+        pin_memory=True,
         drop_last=False,
     )
     def get_model_param_count(model, trainable_only=False):
@@ -294,7 +295,10 @@ def train(cfg: TrainPipelineConfig):
         logging.info("============ Dataset Recipe =================")
         for dataset_idx in range(num_datasets):
             ds = dataset.ds.datasets[dataset_idx]
-            logging.info(f"{ds.repo_id=}: {ds.num_frames=} ({format_big_number(ds.num_frames)}) {ds.num_episodes=} ({format_big_number(ds.num_episodes)}) {ds.weight=} {ds.ds_type=}")
+            if hasattr(ds, "repo_id"):
+                logging.info(f"{ds.repo_id=}: {ds.num_frames=} ({format_big_number(ds.num_frames)}) {ds.num_episodes=} ({format_big_number(ds.num_episodes)}) {ds.weight=} {ds.ds_type=}")
+            else:
+                logging.info(f"{ds.repo_ids=}: {ds.num_frames=} ({format_big_number(ds.num_frames)}) {ds.num_episodes=} ({format_big_number(ds.num_episodes)}) {ds.weight=} {ds.ds_type=}")
         logging.info("============ Dataset Recipe End =================")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
@@ -312,7 +316,7 @@ def train(cfg: TrainPipelineConfig):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
     train_tracker = MetricsTracker(
-        dataset.num_frames, dataset.num_episodes, train_metrics, accelerator=accelerator,
+        dataset.num_frames, dataset.num_episodes, train_metrics, accelerator=accelerator, initial_step=step,
     )
     policy.train()
     if accelerator.is_main_process:
@@ -321,8 +325,14 @@ def train(cfg: TrainPipelineConfig):
     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
     flag_tokens_full = True
     for _ in range(step, cfg.steps):
+    # for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        data_batch, data_indexes = next(seq_dataloader)
+        try:
+            data_batch, data_indexes = next(seq_dataloader)
+        except:
+            print('fetch next frame error!')
+            seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
+            continue
         train_tracker.dataloading_s = time.perf_counter() - start_time
         train_tracker, output_dict = update_policy(
                 train_tracker,
@@ -346,21 +356,22 @@ def train(cfg: TrainPipelineConfig):
                     dataset,
                     num_workers=0, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
                     batch_size=1,
-                    # shuffle=shuffle,
-                    sampler=train_sampler,
-                    pin_memory=False,
+                    shuffle=True,
+                    pin_memory=True,
                     drop_last=False,
                 )
                 seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
             flag_token_full = True
-        step += 1
+        step += len(data_batch['sample_lens'])
+        onestep += 1
         num_tokens = data_batch['sequence_length']
         tokens += num_tokens
-        num_tokens, step = train_tracker.step(num_tokens)
+        num_tokens, step = train_tracker.step(num_tokens, add_steps=len(data_batch['sample_lens']))
 
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq < accelerator.num_processes
-        is_saving_step = step % cfg.save_freq < accelerator.num_processes or abs(step - cfg.steps) < accelerator.num_processes
+        is_saving_step = onestep % cfg.save_freq == 0 or onestep == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq < accelerator.num_processes
+        is_eval_step = False
 
         if cfg.save_checkpoint and is_saving_step:
             accelerator.wait_for_everyone()
@@ -417,10 +428,10 @@ def train(cfg: TrainPipelineConfig):
                 val_sampler = CustomWeightedRandomSampler(weights=val_sample_weights_dict[ds_type], num_samples=len(val_sample_weights_dict[ds_type]), accelerator=accelerator)
                 val_dataloader = torch.utils.data.DataLoader(
                     dataset,
-                    num_workers=0, # cfg.num_workers, ## TODO: set worker
+                    num_workers=64, # cfg.num_workers, ## TODO: set worker
                     batch_size=1,
                     sampler=val_sampler,
-                    pin_memory=False,
+                    pin_memory=True,
                     drop_last=False,
                 )
                 val_seq_dataloader = policy.dataset(val_dataloader, policy.tokenize_action)
