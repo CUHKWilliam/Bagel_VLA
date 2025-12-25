@@ -324,7 +324,8 @@ def train(cfg: TrainPipelineConfig):
     # Create iterator from dataloader
     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
     flag_tokens_full = True
-    for _ in range(step, cfg.steps):
+    while True:
+    # for _ in range(step, cfg.steps):
     # for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         try:

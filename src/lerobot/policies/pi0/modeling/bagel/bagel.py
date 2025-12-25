@@ -39,6 +39,7 @@ class BagelConfig(PretrainedConfig):
         connector_act="gelu_pytorch_tanh",
         interpolate_pos=False,
         timestep_shift=1.0,
+        action_dim=7,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -55,7 +56,7 @@ class BagelConfig(PretrainedConfig):
         self.interpolate_pos = interpolate_pos
         self.timestep_shift = timestep_shift
         ## TODO: from openpi zero, for action generation
-        self.action_dim = 7
+        self.action_dim = action_dim
         self.max_action_dim = 32
         self.action_proj_width = 1024
         self.mse_weight: float = 1.0

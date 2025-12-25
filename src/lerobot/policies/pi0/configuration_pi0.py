@@ -42,6 +42,7 @@ class PI0Config(PreTrainedConfig):
     # Shorter state and action vectors will be padded
     max_state_dim: int = 32
     max_action_dim: int = 32
+    action_dim: int = 7
     use_ref: bool = True
 
     # Image preprocessing

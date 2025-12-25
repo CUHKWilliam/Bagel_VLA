@@ -1178,7 +1178,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # are handled by this class.
         self._datasets = []
         for repo_id in repo_ids:
-            if True:
+            try:
                 self._datasets.append(
                     LeRobotDataset(
                         repo_id,
@@ -1192,6 +1192,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                         use_ref=use_ref,
                     )
                 )
+            except:
+                print(f'fail to load {repo_id}')
+                continue
 
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
