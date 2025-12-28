@@ -715,7 +715,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-    
+        
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
@@ -1309,21 +1309,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        if idx >= len(self):
-            raise IndexError(f"Index {idx} out of bounds.")
-        # Determine which dataset to get an item from based on the index.
-        start_idx = 0
-        dataset_idx = 0
-        for dataset in self._datasets:
-            if idx >= start_idx + dataset.num_frames:
-                start_idx += dataset.num_frames
-                dataset_idx += 1
-                continue
-            break
-        else:
-            raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
-        item = self._datasets[dataset_idx][idx - start_idx]
-        item["dataset_index"] = torch.tensor(dataset_idx)
+        dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
+        item = dataset[int(np.random.choice(np.arange(len(dataset))))]
+        item["dataset_index"] = torch.tensor(0) ## TODO: no use
         for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]
