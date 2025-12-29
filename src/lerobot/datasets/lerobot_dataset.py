@@ -756,6 +756,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     query_indices[k] = query_indices['action']
                 elif 'action.left_gripper' in query_indices.keys():
                     query_indices[k] = query_indices['action.left_gripper']
+                elif "actions.end.position" in query_result.keys():
+                    query_indices[k] = query_indices['actions.end.position']
             
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
@@ -764,7 +766,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ref_video_frames = {}
             for k in video_frames.keys():
                 next_video_frames[f"next.{k.replace('observation.', '')}"] = video_frames[k][-1]
-                current_video_frames[k] = video_frames[k][ref_num:]
+                current_video_frames[k] = video_frames[k][ref_num]
                 ref_video_frames[f"ref.{k.replace('observation.', '')}"] = video_frames[k][:ref_num]
             item = {**current_video_frames, **item, **next_video_frames, **ref_video_frames}
         
