@@ -259,9 +259,9 @@ def train(cfg: TrainPipelineConfig):
     train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights), accelerator=accelerator)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=8, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
+        num_workers=0, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
         batch_size=1,
-        shuffle=False,
+        shuffle=True,
         # sampler=train_sampler,
         pin_memory=True,
         drop_last=False,
@@ -429,7 +429,7 @@ def train(cfg: TrainPipelineConfig):
                 val_sampler = CustomWeightedRandomSampler(weights=val_sample_weights_dict[ds_type], num_samples=len(val_sample_weights_dict[ds_type]), accelerator=accelerator)
                 val_dataloader = torch.utils.data.DataLoader(
                     dataset,
-                    num_workers=64, # cfg.num_workers, ## TODO: set worker
+                    num_workers=0, # cfg.num_workers, ## TODO: set worker
                     batch_size=1,
                     sampler=val_sampler,
                     pin_memory=True,

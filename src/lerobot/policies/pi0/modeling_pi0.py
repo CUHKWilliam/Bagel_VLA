@@ -1015,7 +1015,7 @@ class PI0FlowMatching(nn.Module):
         loss_dict = {} 
         loss = torch.tensor(0).float().cuda()
         if ret['ce'] is not None and "ce_loss_indexes" in data_batch.keys():
-            ce = ret['ce'] * 0 ## TODO:
+            ce = ret['ce']  ## TODO:
             # if self.bagel_model.config.vi sual_gen and "mse_loss_indexes" in data_batch.keys() and not visual_gen_complete:
             #     ce = ce.detach()
             total_ce_tokens = torch.tensor(len(data_batch['ce_loss_indexes'])).cuda()

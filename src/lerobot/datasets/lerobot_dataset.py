@@ -346,7 +346,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        use_ref=True,
+        use_ref=False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -730,13 +730,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item[key] = val
         
         if 'action' not in query_result.keys():
-            ## for humanoid dataset include Galaxea, Agibot
+            ## for Galaxea
             if "action.left_gripper" in query_result.keys() and "action.left_arm" in query_result.keys():
                 left_action = np.concatenate([query_result['action.left_arm'], query_result['action.left_gripper'][:,None]], axis=-1)
                 right_action = np.concatenate([query_result['action.right_arm'], query_result['action.right_gripper'][:,None]], axis=-1)    
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action
+            ## for agibot
+            elif "actions.end.position" in query_result.keys():
+                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], query_result['actions.effector.position'][:, 0, None]], axis=-1)
+                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], query_result['actions.effector.position'][:, 1, None]], axis=-1)
+                action = np.concatenate([left_action, right_action], axis=-1)
+                query_result['action'] = action
+                item['action'] = action
+
         
         item['ref_action'] = item['action'][:ref_num]
         item['action'] = item['action'][ref_num:]
@@ -1309,21 +1317,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        if idx >= len(self):
-            raise IndexError(f"Index {idx} out of bounds.")
-        # Determine which dataset to get an item from based on the index.
-        start_idx = 0
-        dataset_idx = 0
-        for dataset in self._datasets:
-            if idx >= start_idx + dataset.num_frames:
-                start_idx += dataset.num_frames
-                dataset_idx += 1
-                continue
-            break
-        else:
-            raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
-        item = self._datasets[dataset_idx][idx - start_idx]
-        item["dataset_index"] = torch.tensor(dataset_idx)
+        dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
+        item = dataset[int(np.random.choice(np.arange(len(dataset))))]
+        item["dataset_index"] = torch.tensor(0) ## TODO: no use
         for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]
