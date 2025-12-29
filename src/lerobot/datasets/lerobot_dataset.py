@@ -722,7 +722,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         query_indices = None
 
         if self.delta_indices is not None:
-            query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=True)
+            query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=False)
             item['ref_num'] = ref_num
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
@@ -739,8 +739,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item['action'] = action
             ## for agibot
             elif "actions.end.position" in query_result.keys():
-                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], query_result['actions.effector.position'][:, 0, None]], axis=-1)
-                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], query_result['actions.effector.position'][:, 1, None]], axis=-1)
+                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], query_result['actions.end.orientation'][:, 0, :], query_result['actions.effector.position'][:, 0, None]], axis=-1)
+                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], query_result['actions.end.orientation'][:, 1, :], query_result['actions.effector.position'][:, 1, None]], axis=-1)
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action
@@ -764,7 +764,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ref_video_frames = {}
             for k in video_frames.keys():
                 next_video_frames[f"next.{k.replace('observation.', '')}"] = video_frames[k][-1]
-                current_video_frames[k] = video_frames[k][ref_num]
+                current_video_frames[k] = video_frames[k][ref_num:]
                 ref_video_frames[f"ref.{k.replace('observation.', '')}"] = video_frames[k][:ref_num]
             item = {**current_video_frames, **item, **next_video_frames, **ref_video_frames}
         
