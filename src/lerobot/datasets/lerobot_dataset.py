@@ -715,7 +715,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-    
+        
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
