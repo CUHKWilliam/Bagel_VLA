@@ -48,7 +48,7 @@ class TrainPipelineConfig(HubMixin):
     resume: bool = False
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
-    seed: int | None = 1000
+    seed: int | None = None
     # Number of workers for the dataloader.
     num_workers: int = 1
     batch_size: int = 8
