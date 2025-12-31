@@ -345,12 +345,14 @@ def train(cfg: TrainPipelineConfig):
                 accelerator,
                 step,
         )
-
+        
+        # train_sample_seen DEPRECATED
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         if tokens <= cfg.dataset.token_num * 1e9:
-            train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
+        #     train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
             flag_token_full = False
+
         else:
             if not flag_token_full:
                 train_sample_seen = accelerator.gather(torch.tensor(train_sample_seen).cuda()[None, :]).any(0).float().cpu().numpy()
