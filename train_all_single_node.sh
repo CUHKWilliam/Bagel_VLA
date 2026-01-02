@@ -1,1 +1,19 @@
-CUDA_VISIBLE_DEVICES=0  accelerate launch --config_file accelerate_config_single_node.yaml  src/lerobot/scripts/train_dist.py   --save_freq=10000 --eval_freq=10000  --policy.repo_id="lerobot/pi0"   --job_name="act-und-gen-ratio-1-0-0_model-und_data-tok-100M_model-param-2B" --policy.model_size=2 --dataset.token_num=100   --dataset.repo_id="/root/data/datasets/ipec_datasets/berkeley_fanuc_manipulation_lerobot" --batch_size=1   --wandb.project="exp_all_data" --policy.type="pi0" --policy.use_ref=false  --output_dir="./output/train/exp_all-data"  # --resume true  --config_path="./output/train/exp_all-data/checkpoints/000010/pretrained_model/train_config.json" # /root/data/datasets/ipec_datasets/*[!.][!t][!a][!r][!.][!g][!z]"
+MODEL_SIZE=16
+TOKEN_NUM=30000
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6 accelerate launch --config_file accelerate_config_single_node.yaml \
+src/lerobot/scripts/train_dist.py \
+--dataset.repo_id="/mnt/data/dataset/ipec_datasets/*,/mnt/data/dataset/galaxea/lerobot/*,/mnt/data/dataset/smolvla_datasets/*" \
+--policy.model_size=$MODEL_SIZE \
+--dataset.token_num=$TOKEN_NUM \
+--output_dir="./outputs/train/phase-1_base-action-data-only" \
+--policy.push_to_hub=false \
+--policy.repo_id="lerobot/pi0" \
+--eval_freq=20000000 \
+--save_freq=3000 \
+--job_name="phase-1_base-action-data-only" \
+--wandb.project="exp_formal" \
+--policy.use_ref false \
+--policy.type="pi0" \
+--resume true \
+--config_path="./outputs/train/phase-1_base-action-data-only/checkpoints/last/pretrained_model/train_config.json"

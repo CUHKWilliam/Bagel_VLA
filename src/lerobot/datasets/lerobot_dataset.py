@@ -346,7 +346,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        use_ref=True,
+        use_ref=False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -730,13 +730,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item[key] = val
         
         if 'action' not in query_result.keys():
-            ## for humanoid dataset include Galaxea, Agibot
+            ## for Galaxea
             if "action.left_gripper" in query_result.keys() and "action.left_arm" in query_result.keys():
                 left_action = np.concatenate([query_result['action.left_arm'], query_result['action.left_gripper'][:,None]], axis=-1)
                 right_action = np.concatenate([query_result['action.right_arm'], query_result['action.right_gripper'][:,None]], axis=-1)    
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action
+            ## for agibot
+            elif "actions.end.position" in query_result.keys():
+                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], query_result['actions.end.orientation'][:, 0, :], query_result['actions.effector.position'][:, 0, None]], axis=-1)
+                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], query_result['actions.end.orientation'][:, 1, :], query_result['actions.effector.position'][:, 1, None]], axis=-1)
+                action = np.concatenate([left_action, right_action], axis=-1)
+                query_result['action'] = action
+                item['action'] = action
+
         
         item['ref_action'] = item['action'][:ref_num]
         item['action'] = item['action'][ref_num:]
@@ -748,6 +756,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     query_indices[k] = query_indices['action']
                 elif 'action.left_gripper' in query_indices.keys():
                     query_indices[k] = query_indices['action.left_gripper']
+                elif "actions.end.position" in query_result.keys():
+                    query_indices[k] = query_indices['actions.end.position']
             
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
