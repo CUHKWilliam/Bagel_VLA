@@ -210,6 +210,7 @@ class MultiVideoDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx):
+        np.random.seed(idx)
         dataset = np.random.choice(self.datasetes)
         item = dataset.__getiem__(idx)
         return item
