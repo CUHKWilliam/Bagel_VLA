@@ -2,6 +2,8 @@
 This script demonstrates how to evaluate a pretrained smolVLA policy on the LIBERO benchmark.
 """
 
+import sys
+sys.path.append('/mnt/data/code/LIBERO')
 import collections
 import dataclasses
 import logging
@@ -203,17 +205,10 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                         "task": [task_description],
                     }
                     # Query model to get action
+                    
                     ts = time.time()
-                    if t < NUM_PRIOR_ACTIONS:
-                        action_tensor = torch.from_numpy()
-                        predict_image = None
-                        prior[0].append(action_tensor)
-                        prior[1].append(observation)
-                    else:
-                        if t == NUM_PRIOR_ACTIONS:
-                            prior[1].append(observation)
-                        with torch.inference_mode():
-                            action_tensor, predict_image = policy.select_action(observation, prior=prior)
+                    with torch.inference_mode():
+                        action_tensor, predict_image = policy.select_action(observation, prior=None)
                     action = action_tensor.cpu().numpy()[0]
                     action = normalize_gripper_action(action, binarize=False)
                     action = invert_gripper_action(action)

@@ -6,7 +6,7 @@ src/lerobot/scripts/train_dist.py \
 --dataset.repo_id="/mnt/data/dataset/ipec_datasets/viola_lerobot,/mnt/data/dataset/ipec_datasets/jaco_play_lerobot" \
 --policy.model_size=$MODEL_SIZE \
 --dataset.token_num=$TOKEN_NUM \
---output_dir="./outputs/train/phase-1_base-action-data-only_debug" \
+--output_dir="./outputs/train/phase-1_base-action-data-only" \
 --policy.push_to_hub=false \
 --policy.repo_id="lerobot/pi0" \
 --eval_freq=20000000 \

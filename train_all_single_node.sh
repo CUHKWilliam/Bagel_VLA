@@ -3,7 +3,7 @@ TOKEN_NUM=30000
 
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6 accelerate launch --config_file accelerate_config_single_node.yaml \
 src/lerobot/scripts/train_dist.py \
---dataset.repo_id="/mnt/data/dataset/ipec_datasets/*,/mnt/data/dataset/galaxea/lerobot/*,/mnt/data/dataset/smolvla_datasets/*" \
+--dataset.repo_id="/mnt/data/dataset/agibot_lerobot/agibotworld/*,/mnt/data/dataset/ipec_datasets/*,/mnt/data/dataset/galaxea/*" \
 --policy.model_size=$MODEL_SIZE \
 --dataset.token_num=$TOKEN_NUM \
 --output_dir="./outputs/train/phase-1_base-action-data-only" \
@@ -11,9 +11,11 @@ src/lerobot/scripts/train_dist.py \
 --policy.repo_id="lerobot/pi0" \
 --eval_freq=20000000 \
 --save_freq=3000 \
---job_name="phase-1_base-action-data-only" \
+--job_name="phase-1_base-action-data" \
 --wandb.project="exp_formal" \
 --policy.use_ref false \
 --policy.type="pi0" \
 --resume true \
 --config_path="./outputs/train/phase-1_base-action-data-only/checkpoints/last/pretrained_model/train_config.json"
+
+# /mnt/data/dataset/agibot_lerobot/agibotworld/*,/mnt/data/dataset/ipec_datasets/*,/mnt/data/dataset/galaxea/*
