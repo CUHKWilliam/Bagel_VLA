@@ -65,6 +65,8 @@ from torch.utils.data import WeightedRandomSampler
 import pickle
 import multiprocessing
 import wandb
+# import pdb; pdb.set_trace()
+
 wandb.login()
 
 class CustomWeightedRandomSampler(WeightedRandomSampler):
@@ -128,8 +130,8 @@ def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
-    # if cfg.seed is not None:
-    #     set_seed(cfg.seed)
+    if cfg.seed is not None:
+        set_seed(cfg.seed)
     
     # Initialize accelerator
     from accelerate.utils import DistributedDataParallelKwargs
@@ -174,11 +176,9 @@ def train(cfg: TrainPipelineConfig):
     '''
 
     # Set seed for reproducibility
-    # if cfg.seed is not None:
-    #     accelerate_set_seed(cfg.seed)
-    accelerate_set_seed(accelerator.process_index)
-    set_seed(accelerator.process_index)
-    print(accelerator.process_index)
+    if cfg.seed is not None:
+        accelerate_set_seed(cfg.seed)
+
     # Setup device - accelerator handles device placement
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -186,6 +186,7 @@ def train(cfg: TrainPipelineConfig):
     # Create dataset
     if accelerator.is_main_process:
         logging.info("Creating dataset")
+    
     dataset, train_sample_weights, val_sample_weights_dict = make_dataset(cfg, accelerator)
      
     # Create environment used for evaluating checkpoints during training on simulation data.
@@ -233,7 +234,7 @@ def train(cfg: TrainPipelineConfig):
     cfg.policy.device = "cpu"
     policy = make_policy(
         cfg=cfg.policy,
-        # ds_meta=dataset.meta,
+        ds_stats=dataset.stats,
     ).cpu()
     torch.cuda.empty_cache()
     if accelerator.is_main_process:
@@ -326,17 +327,15 @@ def train(cfg: TrainPipelineConfig):
     # Create iterator from dataloader
     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
     flag_tokens_full = True
-    while True:
-    # for _ in range(step, cfg.steps):
+    for _ in range(step, cfg.steps):
     # for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        try:
-            data_batch, data_indexes = next(seq_dataloader)
-        except:
-            print('fetch next frame error!')
-            seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
-            continue
-
+        # try:
+        data_batch, data_indexes = next(seq_dataloader)
+        # except:
+        #     print('fetch next frame error!')
+        #     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
+        #     continue
         train_tracker.dataloading_s = time.perf_counter() - start_time
         train_tracker, output_dict = update_policy(
                 train_tracker,
@@ -345,15 +344,12 @@ def train(cfg: TrainPipelineConfig):
                 accelerator,
                 step,
         )
-        
-        # train_sample_seen DEPRECATED
+
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         if tokens <= cfg.dataset.token_num * 1e9:
-            ## TODO: DEPRECATED
             # train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
             flag_token_full = False
-
         else:
             if not flag_token_full:
                 train_sample_seen = accelerator.gather(torch.tensor(train_sample_seen).cuda()[None, :]).any(0).float().cpu().numpy()

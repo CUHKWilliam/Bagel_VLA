@@ -103,7 +103,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
 def make_policy(
     cfg: PreTrainedConfig,
-    # ds_meta: LeRobotDatasetMetadata | None = None,
+    ds_stats = None,
     env_cfg: EnvConfig | None = None,
 ) -> PreTrainedPolicy:
     """Make an instance of a policy class.
@@ -144,23 +144,8 @@ def make_policy(
 
     policy_cls = get_policy_class(cfg.type)
     
-    '''
-    if ds_meta is not None:
-        features = dataset_to_policy_features(ds_meta.features)
-        kwargs["dataset_stats"] = ds_meta.stats
-    else:
-        if not cfg.pretrained_path:
-            logging.warning(
-                "You are instantiating a policy from scratch and its features are parsed from an environment "
-                "rather than a dataset. Normalization modules inside the policy will have infinite values "
-                "by default without stats from a dataset."
-            )
-        features = env_to_policy_features(env_cfg)
-
-    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
-    '''
     kwargs = {}
+    cfg.dataset_stats = ds_stats
     kwargs["config"] = cfg
 
     if cfg.pretrained_path:
