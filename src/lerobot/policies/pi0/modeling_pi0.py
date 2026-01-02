@@ -483,13 +483,11 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
+        config.dataset_stats['action']['min'] = torch.from_numpy(config.dataset_stats['action']['min'])[None, None, :].cuda()
+        config.dataset_stats['action']['max'] = torch.from_numpy(config.dataset_stats['action']['max'])[None, None, :].cuda()
+        self.dataset_stats = config.dataset_stats
+
         # self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        # self.normalize_targets = Normalize(
-        #     config.output_features, config.normalization_mapping, dataset_stats
-        # )
-        # self.unnormalize_outputs = Unnormalize(
-        #     config.output_features, config.normalization_mapping, dataset_stats
-        # )
         self.model = PI0FlowMatching(config)
         self.reset()
         
@@ -524,6 +522,7 @@ class PI0Policy(PreTrainedPolicy):
             visual_gen=training_args.visual_gen,
             use_ref=self.config.use_ref,
         )
+        print("visual_gen:", training_args.visual_gen, "visual_und:", training_args.visual_und, "action_gen:", training_args.action_gen)
         fast_tokenizer_path = "physical-intelligence/fast"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True, )
         self.pad_token_id = (
@@ -532,6 +531,19 @@ class PI0Policy(PreTrainedPolicy):
             else self.model.tokenizer.eos_token_id
         )
         self.use_ref = config.use_ref
+    
+    def normalize_actions(self, actions):
+        actions -= self.dataset_stats['action']['min']
+        actions /= (self.dataset_stats['action']['max'] - self.dataset_stats['action']['min']) + 1e-6
+        actions = actions * 2 - 1
+        return actions
+
+    def unnormalize_actions(self, actions):
+        actions = (actions + 1) / 2.
+        actions *= (self.dataset_stats['action']['max'] - self.dataset_stats['action']['min'])
+        actions += self.dataset_stats['action']['min']
+        return actions
+
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -576,7 +588,9 @@ class PI0Policy(PreTrainedPolicy):
             actions, predict_image = self.model.sample_actions(
                 batch, self.dataset.dataset.vit_transform, self.dataset.dataset.transform, self.dataset.tokenizer, prior=prior
             )
+            print("before decode actions:", actions)
             actions = self.extract_actions(actions, self.model.bagel_model.action_horizon, self.model.bagel_model.action_dim)
+            print("after decode actions:", actions)
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
 
@@ -588,13 +602,6 @@ class PI0Policy(PreTrainedPolicy):
             predict_image = [None]
         return self._action_queue.popleft(), predict_image[0]
     
-    def normalize_actions(self, actions: torch.Tensor) -> torch.Tensor:
-        # mins = actions.amin(dim=(1, 2), keepdim=True)  # [0]
-        # maxs = actions.amax(dim=(1, 2), keepdim=True)  # [0]
-        # return 2 * (actions - mins) / (maxs - mins + 1e-8) - 1
-        # actions = self.normalize_targets({'action': actions})['action']
-        return actions
-
     
     def fast_tokenizer_wrapper(self, actions_norm):
         """
@@ -629,8 +636,8 @@ class PI0Policy(PreTrainedPolicy):
                     action_dim=self.config.max_action_dim,
                     relaxed_decoding=True,
                 ),
-        ).cuda()[:, :, :action_dim]
-        # deocded_actions = self.unnormalize_inputs({'action': decoded_actions})['action']
+        ).cuda()
+        decoded_actions = self.unnormalize_actions(decoded_actions)[:, :, :action_dim]
         return decoded_actions
 
     def decode_actions_with_fast(
@@ -681,10 +688,10 @@ class PI0Policy(PreTrainedPolicy):
         return np.stack(decoded_actions)
 
     def tokenize_action(self, actions):
-        actions_norm = self.normalize_actions(actions)
         actions_pad = F.pad(
-            actions_norm, (0, max(0, self.config.max_action_dim - actions_norm.shape[2])), value=0
+            actions, (0, max(0, self.config.max_action_dim - actions.shape[2])), value=0
         )[:, :, : self.config.max_action_dim]
+        actions_norm = self.normalize_actions(actions_pad)
         fast_out = self.fast_tokenizer_wrapper(
             actions_pad.cpu(),
         )
@@ -852,6 +859,7 @@ class PI0FlowMatching(nn.Module):
             # TODO: fix bagel
             for name, param in bagel_model.named_parameters():
                 param.requires_grad = True
+
             
             def get_model_param_count(model, trainable_only=False):
                 def numel(p):
@@ -881,6 +889,7 @@ class PI0FlowMatching(nn.Module):
                     param.requires_grad = False
                 else:
                     param.requires_grad = True
+                    
             # if training_args.freeze_llm:
             #     bagel_model.language_model.eval()
             #     for param in bagel_model.language_model.parameters():
