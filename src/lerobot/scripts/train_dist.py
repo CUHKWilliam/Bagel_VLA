@@ -128,8 +128,8 @@ def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
-    #if cfg.seed is not None:
-    #    set_seed(cfg.seed)
+    # if cfg.seed is not None:
+    #     set_seed(cfg.seed)
     
     # Initialize accelerator
     from accelerate.utils import DistributedDataParallelKwargs
@@ -174,9 +174,11 @@ def train(cfg: TrainPipelineConfig):
     '''
 
     # Set seed for reproducibility
-    if cfg.seed is not None:
-        accelerate_set_seed(cfg.seed)
-
+    # if cfg.seed is not None:
+    #     accelerate_set_seed(cfg.seed)
+    accelerate_set_seed(accelerator.process_index)
+    set_seed(accelerator.process_index)
+    print(accelerator.process_index)
     # Setup device - accelerator handles device placement
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -334,6 +336,7 @@ def train(cfg: TrainPipelineConfig):
             print('fetch next frame error!')
             seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
             continue
+
         train_tracker.dataloading_s = time.perf_counter() - start_time
         train_tracker, output_dict = update_policy(
                 train_tracker,
@@ -342,12 +345,15 @@ def train(cfg: TrainPipelineConfig):
                 accelerator,
                 step,
         )
-
+        
+        # train_sample_seen DEPRECATED
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         if tokens <= cfg.dataset.token_num * 1e9:
-            #train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
+            ## TODO: DEPRECATED
+            # train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
             flag_token_full = False
+
         else:
             if not flag_token_full:
                 train_sample_seen = accelerator.gather(torch.tensor(train_sample_seen).cuda()[None, :]).any(0).float().cpu().numpy()
