@@ -383,7 +383,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         ## For action generation 
         sample_keys = list(sample.keys())
         sorted_sample_keys =self.sort_keys(sample_keys)
-
+    
         ## TODO: shuffle keys
         if self.use_ref:
             np.random.shuffle(sorted_sample_keys)
@@ -674,7 +674,7 @@ class PackedDataset:
                 try:
                     batch = next(dl_iter)
                 except StopIteration:
-                    dl_iter = iter(dataloader)
+                    dl_iter = iter(batch_dataloader)
                     batch = next(dl_iter)
                 data_index = batch.pop('data_index')
                 if "action" in batch.keys():
@@ -822,6 +822,9 @@ class PackedDataset:
                 curr_split_len += 1
 
                 # update sequence status
+                # attn_modes.append("full")
+                # sequence_status['packed_position_ids'].extend([curr_rope_id] * (len(shifted_text_ids) + 1))
+                
                 attn_modes.append("causal")
                 sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
                 curr_rope_id += 1
