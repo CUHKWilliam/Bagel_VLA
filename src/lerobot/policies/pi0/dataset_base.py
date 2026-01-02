@@ -474,7 +474,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                 data = self._add_image(
                     data, 
                     pil_img2rgb(Image.fromarray(next_images)),
-                    need_loss=False, ## TODO:no grad now 
+                    need_loss=True, ## TODO:no grad now 
                     need_vae=False, 
                     need_vit=True, 
                 )
@@ -702,8 +702,8 @@ class PackedDataset:
                 else:
                     print(f"skip a sample with length {num_tokens}")
                     continue
-            if sum(sequence_status['sample_lens']) > 100:
-            # if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
+            # sum(sequence_status['sample_lens']) > 100:
+            if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
                 print(f"Yielding data with length {sum(sequence_status['sample_lens'])}")
                 data = self.to_tensor(sequence_status)
                 yield data, batch_data_indexes
@@ -826,8 +826,8 @@ class PackedDataset:
                 curr_split_len += 1
 
                 # update sequence status
-                attn_modes.append("causal")
-                sequence_status['packed_position_ids'].extend(range(curr_rope_id, curr_rope_id + curr_split_len))
+                attn_modes.append("full")
+                sequence_status['packed_position_ids'].extend([curr_rope_id] * (len(shifted_text_ids) + 1))
                 curr_rope_id += 1
 
             elif item['type'] == 'vae_image':

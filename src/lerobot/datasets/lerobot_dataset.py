@@ -346,7 +346,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        use_ref=True,
+        use_ref=False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -715,14 +715,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-    
+        
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
         query_indices = None
 
         if self.delta_indices is not None:
-            query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=True)
+            query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=False)
             item['ref_num'] = ref_num
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
@@ -730,13 +730,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item[key] = val
         
         if 'action' not in query_result.keys():
-            ## for humanoid dataset include Galaxea, Agibot
+            ## for Galaxea
             if "action.left_gripper" in query_result.keys() and "action.left_arm" in query_result.keys():
                 left_action = np.concatenate([query_result['action.left_arm'], query_result['action.left_gripper'][:,None]], axis=-1)
                 right_action = np.concatenate([query_result['action.right_arm'], query_result['action.right_gripper'][:,None]], axis=-1)    
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action
+            ## for agibot
+            elif "actions.end.position" in query_result.keys():
+                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], query_result['actions.end.orientation'][:, 0, :], query_result['actions.effector.position'][:, 0, None]], axis=-1)
+                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], query_result['actions.end.orientation'][:, 1, :], query_result['actions.effector.position'][:, 1, None]], axis=-1)
+                action = np.concatenate([left_action, right_action], axis=-1)
+                query_result['action'] = action
+                item['action'] = action
+
         
         item['ref_action'] = item['action'][:ref_num]
         item['action'] = item['action'][ref_num:]
@@ -748,6 +756,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     query_indices[k] = query_indices['action']
                 elif 'action.left_gripper' in query_indices.keys():
                     query_indices[k] = query_indices['action.left_gripper']
+                elif "actions.end.position" in query_result.keys():
+                    query_indices[k] = query_indices['actions.end.position']
             
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
@@ -1176,20 +1186,25 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
-        self._datasets = [
-            LeRobotDataset(
-                repo_id,
-                root=self.root / repo_id,
-                episodes=episodes[repo_id] if episodes else None,
-                image_transforms=image_transforms,
-                delta_timestamps=delta_timestamps,
-                tolerance_s=self.tolerances_s[repo_id],
-                download_videos=download_videos,
-                video_backend=video_backend,
-                use_ref=use_ref,
-            )
-            for repo_id in repo_ids
-        ]
+        self._datasets = []
+        for repo_id in repo_ids:
+            try:
+                self._datasets.append(
+                    LeRobotDataset(
+                        repo_id,
+                        root=self.root / repo_id,
+                        episodes=episodes[repo_id] if episodes else None,
+                        image_transforms=image_transforms,
+                        delta_timestamps=delta_timestamps,
+                        tolerance_s=self.tolerances_s[repo_id],
+                        download_videos=download_videos,
+                        video_backend=video_backend,
+                        use_ref=use_ref,
+                    )
+                )
+            except:
+                print(f'fail to load {repo_id}')
+                continue
 
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
@@ -1304,21 +1319,10 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        if idx >= len(self):
-            raise IndexError(f"Index {idx} out of bounds.")
-        # Determine which dataset to get an item from based on the index.
-        start_idx = 0
-        dataset_idx = 0
-        for dataset in self._datasets:
-            if idx >= start_idx + dataset.num_frames:
-                start_idx += dataset.num_frames
-                dataset_idx += 1
-                continue
-            break
-        else:
-            raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
-        item = self._datasets[dataset_idx][idx - start_idx]
-        item["dataset_index"] = torch.tensor(dataset_idx)
+        np.random.seed(idx)
+        dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
+        item = dataset[int(np.random.choice(np.arange(len(dataset))))]
+        item["dataset_index"] = torch.tensor(0) ## TODO: no use
         for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]

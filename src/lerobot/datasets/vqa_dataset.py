@@ -150,22 +150,20 @@ class VQADataset(torch.utils.data.Dataset):
                 if data is None:
                     data = []
                 data += json.load(open(os.path.join(self.root_path, name), 'r'))
-                meta_file_path = os.path.join(sef.root_path, name.replace('.json', '_meta.pkl'))
             elif name.endswith('parquet'):
                 a_data = pandas.read_parquet(os.path.join(self.root_path, name))
-                meta_file_path = os.path.join(self.root_path, name.replace('.parquet', '_meta.pkl'))
                 if data is None:
                     data = a_data
                 else:
                     data = pandas.concat([data, a_data])
             elif name.endswith('jsonl'):
                 data = open(os.path.join(self.root_path, name), 'r').readlines()
-                meta_file_path = os.path.join(self.root_path, name.replace('.jsonl', '_meta.pkl'))
             else:
                 continue
-            meta = pickle.load(open(meta_file_path, 'rb'))
-            self.num_episodes += meta['num_episodes']
-            self.num_frames += meta['num_frames']
+        meta_file_path = os.path.join(self.root_path, 'meta.pkl')
+        meta = pickle.load(open(meta_file_path, 'rb'))
+        self.num_episodes = meta['num_episodes']
+        self.num_frames = meta['num_frames']
   
         self.data = data
         self.transform = transform
@@ -248,6 +246,7 @@ class VQADataset(torch.utils.data.Dataset):
 
 class MultiVQADataset(torch.utils.data.Dataset):
     weight = 1.0
+    ds_type = "vqa"
     def __init__(self, repo_ids, transform):
         data = []
         root_paths = []
@@ -255,27 +254,27 @@ class MultiVQADataset(torch.utils.data.Dataset):
         self.num_frames = 0
         self.datasets = []
         for repo_id in repo_ids:
-            for name in os.listdir(repo_id):
-                if name.endswith('json'):
-                    root_paths += [repo_id for _ in range(len(a_data))]
-                    meta_file_name = os.path.join(os.path.join(repo_id, name.replace(".json", "_meta.pkl")))
-                    meta = pickle.load(open(meta_file_name), 'rb')
-                    self.num_episodes += meta['num_epidoes']
-                    self.num_frames += meta['num_frames']
-                    self.datasets.append(
-                        VQADataset(repo_id, transform)
-                    )
-        self.datasets = datasets
+            root_paths += [repo_id for _ in range(len(a_data))]
+            dataset = VQADataset(repo_id, transform)
+            self.datasets.append(dataset)
+            self.num_episodes += dataset.num_episodes
+            self.num_frames += dataset.num_frames
+
         self.root_paths = root_paths
         self.transform = transform
-         
+        self.repo_ids = repo_ids   
+    
+    @property
+    def num_frames(self) -> int:
+        """Number of samples/frames."""
+        return sum(d.num_frames for d in self.datasets)
 
     def __len__(self, ):
-        return len(self.data)
+        return self.num_frames
 
     def __getitem__(self, idx):
         dataset = np.random.choice(self.datasetes)
-        item = dataset.__getiem__(idx)
+        item = dataset.__getiem__(np.random.choice(np.arange(0, len(dataset))))
         return item
     
        

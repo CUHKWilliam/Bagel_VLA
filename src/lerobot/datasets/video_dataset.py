@@ -183,12 +183,14 @@ class VideoDataset(torch.utils.data.Dataset):
 
 class MultiVideoDataset(torch.utils.data.Dataset):
     weight = 1.0
+    ds_type = "video"
     def __init__(self, repo_ids, transform):
         data = []
         root_paths = []
         self.num_episodes = 0
         self.num_frames = 0
         self.datasets = []
+        self.repo_ids = repo_ids
         for repo_id in repo_ids:
             for json_name in os.listdir(repo_id):
                 if json_name.endswith('json'):
@@ -200,13 +202,12 @@ class MultiVideoDataset(torch.utils.data.Dataset):
                     self.datasets.append(
                         VQADataset(repo_id, transform)
                     )
-        self.datasets = datasets
         self.root_paths = root_paths
         self.transform = transform
          
 
-    def __len__(self, ):
-        return len(self.data)
+    def __len__(self):
+        return self.num_frames
 
     def __getitem__(self, idx):
         dataset = np.random.choice(self.datasetes)
