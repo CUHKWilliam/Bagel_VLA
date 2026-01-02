@@ -89,7 +89,7 @@ class LeRobotDatasetMetadata:
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
-
+        
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -108,12 +108,12 @@ class LeRobotDatasetMetadata:
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
 
-        # if self._version < packaging.version.parse("v2.1"):
-        #     self.stats = load_stats(self.root)
-        #     self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
-        # else:
-        #     self.episodes_stats = load_episodes_stats(self.root)
-        #     self.stats = aggregate_stats(list(self.episodes_stats.values()))
+        if self._version < packaging.version.parse("v2.1"):
+            self.stats = load_stats(self.root)
+            self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
+        else:
+            self.episodes_stats = load_episodes_stats(self.root)
+            self.stats = aggregate_stats(list(self.episodes_stats.values()))
 
     def pull_from_repo(
         self,
@@ -715,14 +715,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
-    
+        
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
         query_indices = None
 
         if self.delta_indices is not None:
-            query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=True)
+            query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=False)
             item['ref_num'] = ref_num
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
@@ -1178,23 +1178,19 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # are handled by this class.
         self._datasets = []
         for repo_id in repo_ids:
-            try:
-                self._datasets.append(
-                    LeRobotDataset(
-                        repo_id,
-                        root=self.root / repo_id,
-                        episodes=episodes[repo_id] if episodes else None,
-                        image_transforms=image_transforms,
-                        delta_timestamps=delta_timestamps,
-                        tolerance_s=self.tolerances_s[repo_id],
-                        download_videos=download_videos,
-                        video_backend=video_backend,
-                        use_ref=use_ref,
-                    )
+            self._datasets.append(
+                LeRobotDataset(
+                    repo_id,
+                    root=self.root / repo_id,
+                    episodes=episodes[repo_id] if episodes else None,
+                    image_transforms=image_transforms,
+                    delta_timestamps=delta_timestamps,
+                    tolerance_s=self.tolerances_s[repo_id],
+                    download_videos=download_videos,
+                    video_backend=video_backend,
+                    use_ref=use_ref,
                 )
-            except:
-                print(f'fail to load {repo_id}')
-                continue
+            )
 
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
@@ -1224,6 +1220,23 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
         # self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
+        
+        aggregated_features = {}
+        aggregated_stats = {}
+        for dataset in self._datasets:
+            meta = dataset.meta
+            stats = meta.stats
+            padded_min = np.zeros((32,))
+            padded_min[:len(stats['action']['min'])] = stats['action']['min']
+            stats['action']['min'] = padded_min
+            padded_max = np.zeros((32,))
+            padded_max[:len(stats['action']['max'])] = stats['action']['max']
+            stats['action']['max'] = padded_max
+            if 'action' not in aggregated_stats.keys():
+                aggregated_stats['action'] = stats['action']
+            aggregated_stats['action']['min'] = np.min( [aggregated_stats['action']['min'], stats['action']['min']], axis=0)
+            aggregated_stats['action']['max'] = np.max([aggregated_stats['action']['max'], stats['action']['max']], axis=0)
+        self.stats = aggregated_stats
 
     @property
     def repo_id_to_index(self):
@@ -1309,25 +1322,13 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        if idx >= len(self):
-            raise IndexError(f"Index {idx} out of bounds.")
-        # Determine which dataset to get an item from based on the index.
-        start_idx = 0
-        dataset_idx = 0
-        for dataset in self._datasets:
-            if idx >= start_idx + dataset.num_frames:
-                start_idx += dataset.num_frames
-                dataset_idx += 1
-                continue
-            break
-        else:
-            raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
-        item = self._datasets[dataset_idx][idx - start_idx]
-        item["dataset_index"] = torch.tensor(dataset_idx)
+        np.random.seed(idx)
+        dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
+        item = dataset[int(np.random.choice(np.arange(len(dataset))))]
+        item["dataset_index"] = torch.tensor(0) ## TODO: no use
         for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]
-
         return item
 
     def __repr__(self):
