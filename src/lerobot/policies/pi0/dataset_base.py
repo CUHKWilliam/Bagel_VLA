@@ -228,7 +228,6 @@ class InterleavedBaseIterableDataset:
         return data
     
     def _add_action(self, data, action, need_loss, enable_cfg=True):
-        '''
         data['action'].append(action)
         data['sequence_plan'].append(
             {
@@ -237,7 +236,7 @@ class InterleavedBaseIterableDataset:
                 "loss": 1,
                 "special_token_loss": 1,
             }
-        )'''
+        )
         return data
 
     def _add_image(self, data, image, need_loss, need_vae, need_vit, enable_cfg=True):
