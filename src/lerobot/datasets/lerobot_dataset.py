@@ -74,6 +74,7 @@ from lerobot.datasets.video_utils import (
 )
 import torchvision.transforms as transforms
 import time
+from scipy.spatial.transform import Rotation as R
 
 CODEBASE_VERSION = "v2.1"
 
@@ -101,6 +102,7 @@ class LeRobotDatasetMetadata:
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
+        
 
     def load_metadata(self):
         self.info = load_info(self.root)
@@ -478,7 +480,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.episodes is not None and self.meta._version >= packaging.version.parse("v2.1"):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
+        stats = self.meta.stats
+        if 'action' not in stats.keys():
+            ## for Galaxea
+            if "action.left_gripper" in stats.keys() and "action.left_arm" in stats.keys():
+                left_action_min = np.concatenate([stats['action.left_arm']['min'], stats['action.left_gripper']['min']], axis=-1)
+                right_action_min = np.concatenate([stats['action.right_arm']['min'], stats['action.right_gripper']['min']], axis=-1)
+                action_min = np.concatenate([left_action_min, right_action_min], axis=-1)
+                
+                left_action_max = np.concatenate([stats['action.left_arm']['max'], stats['action.left_gripper']['max']], axis=-1)
+                right_action_max = np.concatenate([stats['action.right_arm']['max'], stats['action.right_gripper']['max']], axis=-1)
+                action_max = np.concatenate([left_action_max, right_action_max], axis=-1)
+                stats['action'] = {'max': action_max, 'min': action_min}
+            ## for agibot
+            elif "actions.end.position" in stats.keys():
+                left_action_min = np.concatenate([stats['actions.end.position']['min'][0, :], stats['actions.end.orientation']['min'][0, :], stats['actions.effector.position']['min'][0, None]], axis=-1)
+                right_action_min = np.concatenate([stats['actions.end.position']['min'][1, :], stats['actions.end.orientation']['min'][1, :], stats['actions.effector.position']['min'][1, None]], axis=-1)
+                action_min = np.concatenate([left_action_min, right_action_min], axis=-1)
+                left_action_max = np.concatenate([stats['actions.end.position']['max'][0, :], stats['actions.end.orientation']['max'][0, :], stats['actions.effector.position']['max'][0, None]], axis=-1)
+                right_action_max = np.concatenate([stats['actions.end.position']['max'][1, :], stats['actions.end.orientation']['max'][1, :], stats['actions.effector.position']['max'][1, None]], axis=-1)
+                action_max = np.concatenate([left_action_max, right_action_max], axis=-1)
+                stats['action'] = {'max': action_max, 'min': action_min}
+        padded_min = np.zeros((32,))
+        padded_min[:len(stats['action']['min'])] = stats['action']['min']
+        stats['action']['min'] = padded_min
+        padded_max = np.zeros((32,))
+        padded_max[:len(stats['action']['max'])] = stats['action']['max']
+        stats['action']['max'] = padded_max
 
+        self.stats = stats
         # Load actual data
         try:
             if force_cache_sync:
@@ -739,8 +769,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item['action'] = action
             ## for agibot
             elif "actions.end.position" in query_result.keys():
-                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], query_result['actions.end.orientation'][:, 0, :], query_result['actions.effector.position'][:, 0, None]], axis=-1)
-                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], query_result['actions.end.orientation'][:, 1, :], query_result['actions.effector.position'][:, 1, None]], axis=-1)
+                left_rpy = R.from_quat(query_result['actions.end.orientation'][:, 0, :].detach().cpu().numpy()).as_euler('XYZ')
+                right_rpy = R.from_quat(query_result['actions.end.orientation'][:, 1, :].detach().cpu().numpy()).as_euler('XYZ')
+                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], left_rpy, query_result['actions.effector.position'][:, 0, None]], axis=-1)
+                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], right_rpy, query_result['actions.effector.position'][:, 1, None]], axis=-1)
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action
@@ -1236,6 +1268,26 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         for dataset in self._datasets:
             meta = dataset.meta
             stats = meta.stats
+            if 'action' not in stats.keys():
+                ## for Galaxea
+                if "action.left_gripper" in stats.keys() and "action.left_arm" in stats.keys():
+                    left_action_min = np.concatenate([stats['action.left_arm']['min'], stats['action.left_gripper']['min']], axis=-1)
+                    right_action_min = np.concatenate([stats['action.right_arm']['min'], stats['action.right_gripper']['min']], axis=-1)
+                    action_min = np.concatenate([left_action_min, right_action_min], axis=-1)
+                    
+                    left_action_max = np.concatenate([stats['action.left_arm']['max'], stats['action.left_gripper']['max']], axis=-1)
+                    right_action_max = np.concatenate([stats['action.right_arm']['max'], stats['action.right_gripper']['max']], axis=-1)
+                    action_max = np.concatenate([left_action_max, right_action_max], axis=-1)
+                    stats['action'] = {'max': action_max, 'min': action_min}
+                ## for agibot
+                elif "actions.end.position" in stats.keys():
+                    left_action_min = np.concatenate([stats['actions.end.position']['min'][0, :], stats['actions.end.orientation']['min'][0, :], stats['actions.effector.position']['min'][0, None]], axis=-1)
+                    right_action_min = np.concatenate([stats['actions.end.position']['min'][1, :], stats['actions.end.orientation']['min'][1, :], stats['actions.effector.position']['min'][1, None]], axis=-1)
+                    action_min = np.concatenate([left_action_min, right_action_min], axis=-1)
+                    left_action_max = np.concatenate([stats['actions.end.position']['max'][0, :], stats['actions.end.orientation']['max'][0, :], stats['actions.effector.position']['max'][0, None]], axis=-1)
+                    right_action_max = np.concatenate([stats['actions.end.position']['max'][1, :], stats['actions.end.orientation']['max'][1, :], stats['actions.effector.position']['max'][1, None]], axis=-1)
+                    action_max = np.concatenate([left_action_max, right_action_max], axis=-1)
+                    stats['action'] = {'max': action_max, 'min': action_min}
             padded_min = np.zeros((32,))
             padded_min[:len(stats['action']['min'])] = stats['action']['min']
             stats['action']['min'] = padded_min
