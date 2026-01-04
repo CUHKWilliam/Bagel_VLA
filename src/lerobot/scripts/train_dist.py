@@ -1,8 +1,3 @@
-#!/usr/bin/env python
-
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
@@ -65,6 +60,7 @@ from torch.utils.data import WeightedRandomSampler
 import pickle
 import multiprocessing
 import wandb
+import pickle
 # import pdb; pdb.set_trace()
 
 wandb.login()
@@ -328,7 +324,6 @@ def train(cfg: TrainPipelineConfig):
     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
     flag_tokens_full = True
     for _ in range(step, cfg.steps):
-    # for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         # try:
         data_batch, data_indexes = next(seq_dataloader)
@@ -337,6 +332,9 @@ def train(cfg: TrainPipelineConfig):
         #     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
         #     continue
         train_tracker.dataloading_s = time.perf_counter() - start_time
+        import ipdb;ipdb.set_trace()
+        pickle.dump(policy.module.dataset_stats, open(os.path.join(checkpoint_dir, "dataset_stats.pkl"), 'wb'))
+
         train_tracker, output_dict = update_policy(
                 train_tracker,
                 policy,
@@ -387,6 +385,7 @@ def train(cfg: TrainPipelineConfig):
             if accelerator.is_main_process:
                 save_checkpoint(checkpoint_dir, step, tokens, cfg, unwrapped_policy, optimizer, lr_scheduler, train_sample_weights, val_sample_weights_dict, train_sample_seen)
                 update_last_checkpoint(checkpoint_dir)
+                pickle.dump(policy.module.dataset_stats, open(os.path.join(checkpoint_dir, "dataset_stats.pkl"), 'wb'))
         if cfg.save_checkpoint and is_saving_step:
             accelerator.wait_for_everyone()
 
