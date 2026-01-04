@@ -2,8 +2,6 @@
 This script demonstrates how to evaluate a pretrained smolVLA policy on the LIBERO benchmark.
 """
 
-import sys
-sys.path.append('/mnt/data/code/LIBERO')
 import collections
 import dataclasses
 import logging
@@ -97,7 +95,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
-    policy = PI0Policy.from_pretrained(checkpoint_path / "pretrained_model")
+    policy = PI0Policy.from_pretrained(checkpoint_path / "pretrained_model", dataset_stats = pickle.load(open(os.path.join(checkpoint_dir, "dataset_stats.pkl"), 'rb')))
     policy.to('cuda:0')
     policy.eval()
 
@@ -205,10 +203,17 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
                         "task": [task_description],
                     }
                     # Query model to get action
-                    
                     ts = time.time()
-                    with torch.inference_mode():
-                        action_tensor, predict_image = policy.select_action(observation, prior=None)
+                    if t < NUM_PRIOR_ACTIONS:
+                        action_tensor = torch.from_numpy()
+                        predict_image = None
+                        prior[0].append(action_tensor)
+                        prior[1].append(observation)
+                    else:
+                        if t == NUM_PRIOR_ACTIONS:
+                            prior[1].append(observation)
+                        with torch.inference_mode():
+                            action_tensor, predict_image = policy.select_action(observation, prior=prior)
                     action = action_tensor.cpu().numpy()[0]
                     action = normalize_gripper_action(action, binarize=False)
                     action = invert_gripper_action(action)
