@@ -337,8 +337,6 @@ def train(cfg: TrainPipelineConfig):
         if error_flag.item() > 0:
             continue
         train_tracker.dataloading_s = time.perf_counter() - start_time
-        import ipdb;ipdb.set_trace()
-        pickle.dump(policy.module.dataset_stats, open(os.path.join(checkpoint_dir, "dataset_stats.pkl"), 'wb'))
 
         train_tracker, output_dict = update_policy(
                 train_tracker,
