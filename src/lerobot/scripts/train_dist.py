@@ -61,6 +61,7 @@ import pickle
 import multiprocessing
 import wandb
 import pickle
+import torch.distributed as dist
 # import pdb; pdb.set_trace()
 
 wandb.login()
@@ -332,7 +333,6 @@ def train(cfg: TrainPipelineConfig):
             print('fetch next frame error!')
             seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
             error_flag = torch.tensor([1]).cuda()
-            continue
         dist.all_reduce(error_flag, op=dist.ReduceOp.MAX)
         if error_flag.item() > 0:
             continue
