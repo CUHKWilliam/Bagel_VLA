@@ -61,6 +61,7 @@ import pickle
 import multiprocessing
 import wandb
 import pickle
+import torch.distributed as dist
 # import pdb; pdb.set_trace()
 
 wandb.login()
@@ -325,15 +326,17 @@ def train(cfg: TrainPipelineConfig):
     flag_tokens_full = True
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        # try:
-        data_batch, data_indexes = next(seq_dataloader)
-        # except:
-        #     print('fetch next frame error!')
-        #     seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
-        #     continue
+        try:
+            data_batch, data_indexes = next(seq_dataloader)
+            error_flag = torch.tensor([0]).cuda()
+        except:
+            print('fetch next frame error!')
+            seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
+            error_flag = torch.tensor([1]).cuda()
+        dist.all_reduce(error_flag, op=dist.ReduceOp.MAX)
+        if error_flag.item() > 0:
+            continue
         train_tracker.dataloading_s = time.perf_counter() - start_time
-        import ipdb;ipdb.set_trace()
-        pickle.dump(policy.module.dataset_stats, open(os.path.join(checkpoint_dir, "dataset_stats.pkl"), 'wb'))
 
         train_tracker, output_dict = update_policy(
                 train_tracker,
@@ -342,8 +345,7 @@ def train(cfg: TrainPipelineConfig):
                 accelerator,
                 step,
         )
-
-        # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
+        '''
         # increment `step` here.
         if tokens <= cfg.dataset.token_num * 1e9:
             # train_sample_seen[torch.cat(data_indexes).detach().cpu().numpy().astype(np.int64)] = 1
@@ -363,6 +365,7 @@ def train(cfg: TrainPipelineConfig):
                 )
                 seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
             flag_token_full = True
+        '''
         step += len(data_batch['sample_lens'])
         onestep += 1
         num_tokens = data_batch['sequence_length']
