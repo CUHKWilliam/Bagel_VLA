@@ -128,13 +128,24 @@ class VideoDataset(torch.utils.data.Dataset):
                 meta = pickle.load(open(meta_file_path, 'rb'))
                 self.num_episodes += meta['num_episodes']
                 self.num_frames += meta['num_frames']
+            elif file_name.endswith('jsonl'):
+                ## for ego4d
+                data_str = open(os.path.join(self.root_path, file_name), 'r').readlines()
+                for a_data_str in data_str:
+                    data.append(json.loads(a_data_str))
+                meta_file_path = os.path.join(self.root_path, file_name.replace('.jsonl', '_meta.pkl'))
+                meta = pickle.load(open(meta_file_path, 'rb'))
+                self.num_frames += meta['num_frames']
+                self.num_episodes += meta['num_episodes']
+                self.num_frames += meta['num_frames']
         self.data = data
         self.transform = transform
+        self.stats = None
         
     def __getitem__(self, idx):
         a_video_data = self.data[idx]
         item = {}
-        if 'id' in a_video_data:
+        if 'id' in a_video_data.keys():
             ## for somethiing-something-v2
             video_path = os.path.join(self.root_path, "videos", '{}.webm'.format(a_video_data['id']))
             frames_iter = iio.imiter(video_path)
@@ -150,9 +161,9 @@ class VideoDataset(torch.utils.data.Dataset):
                     "content": [{'type': 'text', 'text': np.random.choice(question_templates).format("\""+a_video_data['label']+"\"")}]
                 }
             ]
-        elif 'image' in a_video_data:
+        elif 'image' in a_video_data.keys():
             ## for ego4d-video
-            frames = np.load(os.path.join(self.root_path, a_video_data['image']))
+            frames = np.load(os.path.join(self.root_path,'ego4d_video', a_video_data['image']))
             image = frames[0].transpose((1, 2, 0)) * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406] )
             image = np.clip(image, a_min=0, a_max=1) * 255
             num_frames = len(frames)
@@ -193,26 +204,29 @@ class MultiVideoDataset(torch.utils.data.Dataset):
         self.repo_ids = repo_ids
         for repo_id in repo_ids:
             for json_name in os.listdir(repo_id):
-                if json_name.endswith('json'):
-                    root_paths += [repo_id for _ in range(len(a_data))]
-                    meta_file_name = os.path.join(os.path.join(repo_id, json_name.replace(".json", "_meta.pkl")))
-                    meta = pickle.load(open(meta_file_name), 'rb')
-                    self.num_episodes += meta['num_epidoes']
+                if json_name.endswith('json') or json_name.endswith('jsonl'):
+                    root_paths.append(repo_id)
+                    if json_name.endswith('json'):
+                        meta_file_name = os.path.join(os.path.join(repo_id, json_name.replace(".json", "_meta.pkl")))
+                    elif json_name.endswith('jsonl'):
+                        meta_file_name = os.path.join(os.path.join(repo_id, json_name.replace(".jsonl", "_meta.pkl")))
+                    meta = pickle.load(open(meta_file_name, 'rb'))
+                    self.num_episodes += meta['num_episodes']
                     self.num_frames += meta['num_frames']
                     self.datasets.append(
-                        VQADataset(repo_id, transform)
+                        VideoDataset(repo_id, transform)
                     )
         self.root_paths = root_paths
         self.transform = transform
-         
-
+        self.stats = None
+    
     def __len__(self):
         return self.num_frames
 
     def __getitem__(self, idx):
         np.random.seed(idx)
-        dataset = np.random.choice(self.datasetes)
+        dataset = np.random.choice(self.datasets)
         item = dataset.__getiem__(idx)
         return item
-    
+
        
