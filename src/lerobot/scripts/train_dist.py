@@ -326,16 +326,7 @@ def train(cfg: TrainPipelineConfig):
     flag_tokens_full = True
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        try:
-            data_batch, data_indexes = next(seq_dataloader)
-            error_flag = torch.tensor([0]).cuda()
-        except:
-            print('fetch next frame error!')
-            seq_dataloader = policy.dataset(dataloader, policy.tokenize_action)
-            error_flag = torch.tensor([1]).cuda()
-        dist.all_reduce(error_flag, op=dist.ReduceOp.MAX)
-        if error_flag.item() > 0:
-            continue
+        data_batch, data_indexes = next(seq_dataloader)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         train_tracker, output_dict = update_policy(

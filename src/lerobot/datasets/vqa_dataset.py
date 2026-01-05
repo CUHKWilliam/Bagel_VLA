@@ -254,7 +254,7 @@ class MultiVQADataset(torch.utils.data.Dataset):
         self.num_frames = 0
         self.datasets = []
         for repo_id in repo_ids:
-            root_paths += [repo_id for _ in range(len(a_data))]
+            root_paths.append(repo_id) 
             dataset = VQADataset(repo_id, transform)
             self.datasets.append(dataset)
             self.num_episodes += dataset.num_episodes
@@ -263,19 +263,14 @@ class MultiVQADataset(torch.utils.data.Dataset):
         self.root_paths = root_paths
         self.transform = transform
         self.repo_ids = repo_ids   
-    
-    @property
-    def num_frames(self) -> int:
-        """Number of samples/frames."""
-        return sum(d.num_frames for d in self.datasets)
 
     def __len__(self, ):
         return self.num_frames
 
     def __getitem__(self, idx):
         np.random.seed(idx)
-        dataset = np.random.choice(self.datasetes)
-        item = dataset.__getiem__(np.random.choice(np.arange(0, len(dataset))))
+        dataset = self.datasets[np.random.randint(low=0, high=len(self.datasets))]
+        item = dataset[np.random.choice(np.arange(0, len(dataset)))]
         return item
     
        

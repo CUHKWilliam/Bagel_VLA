@@ -223,7 +223,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(

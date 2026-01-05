@@ -86,7 +86,7 @@ class ConcatDatasetWithIndex(Dataset):
         self.ds = ConcatDataset(inputs)
         self.stats = None
         for inp in inputs:
-            if hasattr(inp, "stats"):
+            if hasattr(inp, "stats") and inp.stats is not None:
                 self.stats = inp.stats
 
     def __getitem__(self, index):
@@ -94,8 +94,8 @@ class ConcatDatasetWithIndex(Dataset):
             try:
                 data = self.ds.__getitem__(index)
                 break
-            except:
-                print(f'fail loading at {index}')
+            except Exception as e:
+                print(f'fail loading at {index}: {e}')
                 index += 1
                 continue
         data['data_index'] = index
@@ -214,7 +214,6 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator) -> LeRobotDataset | Mult
                 for a_repo_id in cfg.dataset.video_repo_id:
                     repo_id2 += glob.glob(a_repo_id)
                 cfg.dataset.video_repo_id = repo_id2
-            
             dataset = MultiVideoDataset(
                 cfg.dataset.video_repo_id,
                 transform=image_transforms,
