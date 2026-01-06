@@ -84,12 +84,20 @@ def resolve_delta_timestamps(
 class ConcatDatasetWithIndex(Dataset):
     def __init__(self, inputs):
         self.ds = ConcatDataset(inputs)
+        self.stats = None
         for inp in inputs:
             if hasattr(inp, "stats"):
                 self.stats = inp.stats
 
     def __getitem__(self, index):
-        data = self.ds.__getitem__(index)
+        while True:
+            try:
+                data = self.ds.__getitem__(index)
+                break
+            except:
+                print(f'fail loading at {index}')
+                index += 1
+                continue
         data['data_index'] = index
         return data
     
@@ -204,11 +212,11 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
             elif isinstance(cfg.dataset.video_repo_id, list):
                 repo_id2 = []
                 for a_repo_id in cfg.dataset.video_repo_id:
-                    repo_id2 += glob.glob(video_a_repo_id)
+                    repo_id2 += glob.glob(a_repo_id)
                 cfg.dataset.video_repo_id = repo_id2
             
             dataset = MultiVideoDataset(
-                cfg.dataset.video_repo,
+                cfg.dataset.video_repo_id,
                 transform=image_transforms,
             )
         all_datasets.append(dataset)
