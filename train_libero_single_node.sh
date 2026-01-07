@@ -1,7 +1,7 @@
 MODEL_SIZE=16
 TOKEN_NUM=30000
 
-CUDA_VISIBLE_DEVICES=0 accelerate launch --config_file accelerate_config_single_node.yaml \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --config_file accelerate_config_single_node.yaml \
 src/lerobot/scripts/train_dist.py \
 --dataset.repo_id="/mnt/data/dataset/libero_spatial" \
 --policy.model_size=$MODEL_SIZE \

@@ -84,6 +84,7 @@ def resolve_delta_timestamps(
 class ConcatDatasetWithIndex(Dataset):
     def __init__(self, inputs):
         self.ds = ConcatDataset(inputs)
+        self.dataset_lists = inputs
         self.stats = None
         for inp in inputs:
             if hasattr(inp, "stats") and inp.stats is not None:
@@ -92,7 +93,8 @@ class ConcatDatasetWithIndex(Dataset):
     def __getitem__(self, index):
         while True:
             try:
-                data = self.ds.__getitem__(index)
+                selected_dataset = self.dataset_lists[np.random.randint(low=0, high=len(self.dataset_lists))]
+                data = selected_dataset[index]
                 break
             except Exception as e:
                 print(f'fail loading at {index}: {e}')

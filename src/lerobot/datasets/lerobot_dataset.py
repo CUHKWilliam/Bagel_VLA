@@ -90,7 +90,6 @@ class LeRobotDatasetMetadata:
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
-        
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -769,10 +768,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item['action'] = action
             ## for agibot
             elif "actions.end.position" in query_result.keys():
-                left_rpy = R.from_quat(query_result['actions.end.orientation'][:, 0, :].detach().cpu().numpy()).as_euler('XYZ')
-                right_rpy = R.from_quat(query_result['actions.end.orientation'][:, 1, :].detach().cpu().numpy()).as_euler('XYZ')
-                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], left_rpy, query_result['actions.effector.position'][:, 0, None]], axis=-1)
-                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], right_rpy, query_result['actions.effector.position'][:, 1, None]], axis=-1)
+                left_action = np.concatenate([query_result['actions.end.position'][:, 0, :], query_result['actions.end.orientation'][:, 0, :], query_result['actions.effector.position'][:, 0, None]], axis=-1)
+                right_action = np.concatenate([query_result['actions.end.position'][:, 1, :], query_result['actions.end.orientation'][:, 1, :], query_result['actions.effector.position'][:, 1, None]], axis=-1)
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action

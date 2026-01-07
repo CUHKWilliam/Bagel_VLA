@@ -335,7 +335,7 @@ class Bagel(PreTrainedModel):
             past_key_values=past_key_values,
             **extra_inputs,
         )
-
+        
         mse = torch.tensor(0.).float().cuda()
         if self.config.visual_gen and padded_latent is not None and len(mse_loss_indexes) > 0:
             packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
