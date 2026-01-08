@@ -670,12 +670,13 @@ class PackedDataset:
         sequence_status = self.set_sequence_status()
         buffer = []
         while True:
-            while True:
-                try:
-                    batch = next(dl_iter)
-                except StopIteration:
-                    dl_iter = iter(batch_dataloader)
-                    batch = next(dl_iter)
+            for batch in batch_dataloader:
+            # while True:
+                # try:
+                #     batch = next(dl_iter)
+                # except StopIteration:
+                #     dl_iter = iter(batch_dataloader)
+                #     batch = next(dl_iter)
                 data_index = batch.pop('data_index')
                 if "action" in batch.keys():
                     actions = batch["action"]

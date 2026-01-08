@@ -135,12 +135,12 @@ def train(cfg: TrainPipelineConfig):
 
     from lerobot.utils.wandb_utils import cfg_to_group, get_wandb_run_id_from_filesystem
 
-    # ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         # mixed_precision="no",
         # gradient_accumulation_steps=1,
         # log_with="wandb" if cfg.wandb.enable else None,
-        # kwargs_handlers=[ddp_kwargs],
+        kwargs_handlers=[ddp_kwargs],
         # project_dir=cfg.output_dir,
     )
     if cfg.wandb.enable and cfg.wandb.project:

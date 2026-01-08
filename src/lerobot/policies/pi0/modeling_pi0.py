@@ -541,6 +541,7 @@ class PI0Policy(PreTrainedPolicy):
         actions -= self.dataset_stats['action']['min']
         actions /= (self.dataset_stats['action']['max'] - self.dataset_stats['action']['min']) + 1e-6
         actions = actions * 2 - 1
+        actions = torch.clamp(actions, -1, 1)
         return actions
 
     def unnormalize_actions(self, actions):
@@ -696,9 +697,9 @@ class PI0Policy(PreTrainedPolicy):
         actions_pad = F.pad(
             actions, (0, max(0, self.config.max_action_dim - actions.shape[2])), value=0
         )[:, :, : self.config.max_action_dim]
-        # actions_norm = self.normalize_actions(actions_pad)
+        actions_norm = self.normalize_actions(actions_pad)
         fast_out = self.fast_tokenizer_wrapper(
-            actions_pad.cpu(),
+            actions_norm.cpu(),
         )
         act_ids = [torch.tensor(a_fast_out) for a_fast_out in fast_out]
         act_ids = [self._act_tokens_to_bagel_tokens(a_act_ids).cuda() for a_act_ids in act_ids]

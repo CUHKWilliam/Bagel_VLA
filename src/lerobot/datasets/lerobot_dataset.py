@@ -1381,7 +1381,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        np.random.seed(idx)
+        # np.random.seed(idx)
         dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
         item = dataset[int(np.random.choice(np.arange(len(dataset))))]
         item["dataset_index"] = torch.tensor(0) ## TODO: no use

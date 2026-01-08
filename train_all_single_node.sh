@@ -4,8 +4,6 @@ TOKEN_NUM=300000000000000000
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --config_file accelerate_config_single_node.yaml \
 src/lerobot/scripts/train_dist.py \
 --dataset.repo_id="/mnt/data/dataset/agibot_lerobot/agibotworld/*,/mnt/data/dataset/ipec_datasets/*,/mnt/data/dataset/galaxea/*" \
---dataset.video_repo_id="/mnt/data/dataset/something-something-v2" \
---dataset.vqa_repo_id="/mnt/data/dataset/cambrian,/mnt/data/dataset/robot2vlm/data" \
 --policy.model_size=$MODEL_SIZE \
 --dataset.token_num=$TOKEN_NUM \
 --output_dir="./outputs/train/phase-1_base-action-data-only" \
