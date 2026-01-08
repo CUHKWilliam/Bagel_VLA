@@ -470,7 +470,7 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
-        # dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        dataset_stats=None
     ):
         """
         Args:
@@ -483,8 +483,11 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        config.dataset_stats['action']['min'] = torch.from_numpy(config.dataset_stats['action']['min'])[None, None, :].cuda()
-        config.dataset_stats['action']['max'] = torch.from_numpy(config.dataset_stats['action']['max'])[None, None, :].cuda()
+        if dataset_stats is not None:
+            config.dataset_stats = dataset_stats
+        if isinstance(config.dataset_stats['action']['min'], np.ndarray):
+            config.dataset_stats['action']['min'] = torch.from_numpy(config.dataset_stats['action']['min'])[None, None, :].cuda()
+            config.dataset_stats['action']['max'] = torch.from_numpy(config.dataset_stats['action']['max'])[None, None, :].cuda()
         self.dataset_stats = config.dataset_stats
 
         # self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
@@ -536,6 +539,7 @@ class PI0Policy(PreTrainedPolicy):
         actions -= self.dataset_stats['action']['min']
         actions /= (self.dataset_stats['action']['max'] - self.dataset_stats['action']['min']) + 1e-6
         actions = actions * 2 - 1
+        acitons = torch.clamp(actions, -1, 1)
         return actions
 
     def unnormalize_actions(self, actions):
@@ -700,7 +704,7 @@ class PI0Policy(PreTrainedPolicy):
         )[:, :, : self.config.max_action_dim]
         actions_norm = self.normalize_actions(actions_pad)
         fast_out = self.fast_tokenizer_wrapper(
-            actions_pad.cpu(),
+            actions_norm.cpu(),
         )
         act_ids = [torch.tensor(a_fast_out) for a_fast_out in fast_out]
         act_ids = [self._act_tokens_to_bagel_tokens(a_act_ids).cuda() for a_act_ids in act_ids]

@@ -66,7 +66,7 @@ class Args:
     Evaluation arguments for smolVLA on LIBERO.
     """
     # --- LIBERO environment-specific parameters ---
-    task_suite_name: str = "libero_spatial"
+    task_suite_name: str = "libero_goal"
     """Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90"""
     num_steps_wait: int = 10
     """Number of steps to wait for objects to stabilize in sim."""
@@ -95,7 +95,7 @@ def eval_libero(cfg: TrainPipelineConfig) -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     checkpoint_path = cfg.output_dir / "checkpoints" / "last" 
-    policy = PI0Policy.from_pretrained(checkpoint_path / "pretrained_model", dataset_stats = pickle.load(open(os.path.join(checkpoint_dir, "dataset_stats.pkl"), 'rb')))
+    policy = PI0Policy.from_pretrained(checkpoint_path / "pretrained_model", dataset_stats = pickle.load(open(os.path.join(checkpoint_path, "dataset_stats.pkl"), 'rb')))
     policy.to('cuda:0')
     policy.eval()
 

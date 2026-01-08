@@ -8,11 +8,7 @@ downcast_bf16: 'no'
 enable_cpu_affinity: false
 main_training_function: main
 num_machines: 1
-<<<<<<< HEAD
 num_processes: 8
-=======
-num_processes: 1
->>>>>>> dbe7a530b7ed1dab66a28f1d77e513de1f9841d6
 rdzv_backend: static
 same_network: true
 tpu_env: []
