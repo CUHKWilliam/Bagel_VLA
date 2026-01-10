@@ -470,7 +470,7 @@ class PI0Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0Config,
-        dataset_stats=None
+        dataset_stats = None,
     ):
         """
         Args:
@@ -483,11 +483,14 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
+
+        if hasattr(config, "dataset_stats"):
+            dataset_stats = config.dataset_stats
         if dataset_stats is not None:
             config.dataset_stats = dataset_stats
-        if isinstance(config.dataset_stats['action']['min'], np.ndarray):
-            config.dataset_stats['action']['min'] = torch.from_numpy(config.dataset_stats['action']['min'])[None, None, :].cuda()
-            config.dataset_stats['action']['max'] = torch.from_numpy(config.dataset_stats['action']['max'])[None, None, :].cuda()
+            if isinstance(config.dataset_stats['action']['min'], np.ndarray):
+                config.dataset_stats['action']['min'] = torch.from_numpy(config.dataset_stats['action']['min'])[None, None, :].cuda()
+                config.dataset_stats['action']['max'] = torch.from_numpy(config.dataset_stats['action']['max'])[None, None, :].cuda()
         self.dataset_stats = config.dataset_stats
 
         # self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
@@ -521,7 +524,7 @@ class PI0Policy(PreTrainedPolicy):
             use_flex=training_args.use_flex,
             data_status=None,
             action_dim=self.model.bagel_model.config.action_dim,
-            action_horizon = self.config.chunk_size,
+            action_horizon=self.config.chunk_size,
             visual_gen=training_args.visual_gen,
             use_ref=self.config.use_ref,
         )
@@ -539,7 +542,7 @@ class PI0Policy(PreTrainedPolicy):
         actions -= self.dataset_stats['action']['min']
         actions /= (self.dataset_stats['action']['max'] - self.dataset_stats['action']['min']) + 1e-6
         actions = actions * 2 - 1
-        acitons = torch.clamp(actions, -1, 1)
+        actions = torch.clamp(actions, -1, 1)
         return actions
 
     def unnormalize_actions(self, actions):
@@ -817,7 +820,7 @@ class PI0FlowMatching(nn.Module):
             llm_config.qk_norm = model_args.llm_qk_norm
             llm_config.tie_word_embeddings = model_args.tie_word_embeddings
             llm_config.freeze_und = training_args.freeze_und
-            language_model = Qwen2ForCausalLM(llm_config, visual_gen = training_args.visual_gen)
+            language_model = Qwen2ForCausalLM(llm_config, visual_gen=training_args.visual_gen)
             if training_args.copy_init_moe:
                 language_model.init_moe()
             if training_args.visual_und:  
@@ -854,6 +857,8 @@ class PI0FlowMatching(nn.Module):
             self.bagel_model = bagel_model
             if training_args.visual_und:
                 bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
+            
+            # TODO: loead model
             model_state_dict_path = os.path.join(model_args.model_path, "ema.safetensors")
             model_state_dict = load_file(model_state_dict_path, device="cpu")
             msg = bagel_model.load_state_dict(model_state_dict, strict=False)
@@ -897,20 +902,20 @@ class PI0FlowMatching(nn.Module):
             
 
             ## TODO: overwrite the above freeze, train only the generation exp
-            for name, param in bagel_model.named_parameters():
-                if "moe" not in name:
-                    param.requires_grad = False
+            # for name, param in bagel_model.named_parameters():
+            #     if "moe" not in name:
+            #         param.requires_grad = False
 
-                else:
-                    param.requires_grad =True
+            #     else:
+            #         param.requires_grad =True
 
             self.vae_model = vae_model
              
-            for name, param in bagel_model.named_parameters():
-                if 'moe' in name:
-                    param.requires_grad = False
-                else:
-                    param.requires_grad = True
+            # for name, param in bagel_model.named_parameters():
+            #     if 'moe' in name:
+            #         param.requires_grad = True
+            #     else:
+            #         param.requires_grad = True
                     
             # if training_args.freeze_llm:
             #     bagel_model.language_model.eval()

@@ -467,10 +467,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         next_img_num = len(next_images)
         if self.visual_gen:
             if len(next_images) > 0:
-                # next_images = next_images[-1] ## TODO: select only one image for now
-                next_images = cv2.hconcat(next_images)
-                ## TODO: no next images 
-                #'''
+                next_images = next_images[-1] ## TODO: select only one image for now
                 data = self._add_image(
                     data, 
                     pil_img2rgb(Image.fromarray(next_images)),
@@ -674,6 +671,7 @@ class PackedDataset:
         sequence_status = self.set_sequence_status()
         buffer = []
         while True:
+            # for batch in batch_dataloader:
             while True:
                 try:
                     batch = next(dl_iter)

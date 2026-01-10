@@ -129,8 +129,6 @@ class VideoDataset(torch.utils.data.Dataset):
                 self.num_episodes += meta['num_episodes']
                 self.num_frames += meta['num_frames']
             elif file_name.endswith('jsonl'):
-                ## for ego4d
-                data_str = open(os.path.join(self.root_path, file_name), 'r').readlines()
                 for a_data_str in data_str:
                     data.append(json.loads(a_data_str))
                 meta_file_path = os.path.join(self.root_path, file_name.replace('.jsonl', '_meta.pkl'))
@@ -225,8 +223,8 @@ class MultiVideoDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         np.random.seed(idx)
-        dataset = np.random.choice(self.datasets)
-        item = dataset.__getiem__(idx)
+        dataset = self.datasets[np.random.randint(low=0, high=len(self.datasets))]
+        item = dataset[np.random.randint(low=0, high=len(dataset))]
         return item
 
        
