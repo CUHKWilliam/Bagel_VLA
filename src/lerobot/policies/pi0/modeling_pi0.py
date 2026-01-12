@@ -223,7 +223,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -1132,8 +1132,8 @@ class PI0FlowMatching(nn.Module):
                 generation_input = autocast(generation_input, torch.float32, self.dtype)
                 past_key_values = self.bagel_model.forward_cache_update_vit(past_key_values, **generation_input)
                 observation_images.append(image_np)
-        observation_image = cv2.hconcat(observation_images)
-        # observation_image = observation_images[-1]
+        # observation_image = cv2.hconcat(observation_images)
+        observation_image = observation_images[-1]
         # add text
         prompt = "Task:" + batch['task'][0] + ". Please predict the next observation and the action."
         generation_input, newlens, new_rope = self.bagel_model.prepare_prompts(
