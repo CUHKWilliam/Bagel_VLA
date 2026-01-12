@@ -1,0 +1,1288 @@
+=== Environment Check ===
+Log File: /dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/log_node0.txt
+Time: Wed Dec  3 18:26:53 CST 2025
+
+=== Core Distributed Training Variables ===
+NPROC_PER_NODE       = 8
+MASTER_PORT          = 22249
+NNODES               = 1
+NODE_RANK            = 0
+MASTER_ADDR          = localhost
+
+Conda environment activated: bagel_vla
+Python path: /dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/bin/python
+Python 3.10.0
+
+df: /root/.triton/autotune: No such file or directory
+W1203 18:27:17.530153 2890083 site-packages/torch/distributed/run.py:766] 
+W1203 18:27:17.530153 2890083 site-packages/torch/distributed/run.py:766] *****************************************
+W1203 18:27:17.530153 2890083 site-packages/torch/distributed/run.py:766] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W1203 18:27:17.530153 2890083 site-packages/torch/distributed/run.py:766] *****************************************
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Currently logged in as: 812666178 (812666178-university-of-california-berkeley) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+INFO 2025-12-03 18:27:32 ils/utils.py:48 Cuda backend detected, using cuda.
+WARNING 2025-12-03 18:27:32 /policies.py:82 Device 'None' is not available. Switching to 'cuda'.
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+INFO 2025-12-03 18:27:32 ain_dist.py:129 {'batch_size': 8,
+ 'dataset': {'episodes': None,
+             'image_transforms': {'enable': False,
+                                  'max_num_transforms': 3,
+                                  'random_order': False,
+                                  'tfs': {'brightness': {'kwargs': {'brightness': [0.8,
+                                                                                   1.2]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'contrast': {'kwargs': {'contrast': [0.8,
+                                                                               1.2]},
+                                                       'type': 'ColorJitter',
+                                                       'weight': 1.0},
+                                          'hue': {'kwargs': {'hue': [-0.05,
+                                                                     0.05]},
+                                                  'type': 'ColorJitter',
+                                                  'weight': 1.0},
+                                          'saturation': {'kwargs': {'saturation': [0.5,
+                                                                                   1.5]},
+                                                         'type': 'ColorJitter',
+                                                         'weight': 1.0},
+                                          'sharpness': {'kwargs': {'sharpness': [0.5,
+                                                                                 1.5]},
+                                                        'type': 'SharpnessJitter',
+                                                        'weight': 1.0}}},
+             'repo_id': '/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot',
+             'revision': None,
+             'root': None,
+             'token_num': 3.0,
+             'use_imagenet_stats': True,
+             'video_backend': 'torchcodec',
+             'video_repo_id': None,
+             'vqa_repo_id': None},
+ 'env': None,
+ 'eval': {'batch_size': 50, 'n_episodes': 50, 'use_async_envs': False},
+ 'eval_freq': 20000000,
+ 'job_name': 'act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'log_freq': 2,
+ 'num_workers': 1,
+ 'optimizer': {'betas': [0.9, 0.95],
+               'eps': 1e-08,
+               'grad_clip_norm': 10.0,
+               'lr': 2.5e-05,
+               'type': 'adamw',
+               'weight_decay': 1e-10},
+ 'output_dir': '/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B',
+ 'policy': {'adapt_to_pi_aloha': False,
+            'attention_implementation': 'eager',
+            'chunk_size': 50,
+            'device': 'cuda',
+            'empty_cameras': 0,
+            'freeze_vision_encoder': True,
+            'input_features': {},
+            'license': None,
+            'max_action_dim': 32,
+            'max_state_dim': 32,
+            'model_size': 16.0,
+            'n_action_steps': 50,
+            'n_obs_steps': 1,
+            'normalization_mapping': {'ACTION': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'STATE': <NormalizationMode.MEAN_STD: 'MEAN_STD'>,
+                                      'VISUAL': <NormalizationMode.IDENTITY: 'IDENTITY'>},
+            'num_steps': 10,
+            'optimizer_betas': [0.9, 0.95],
+            'optimizer_eps': 1e-08,
+            'optimizer_lr': 2.5e-05,
+            'optimizer_weight_decay': 1e-10,
+            'output_features': {},
+            'private': None,
+            'proj_width': 1024,
+            'push_to_hub': False,
+            'repo_id': 'lerobot/pi0',
+            'resize_imgs_with_padding': [224, 224],
+            'scheduler_decay_lr': 2.5e-06,
+            'scheduler_decay_steps': 30000,
+            'scheduler_warmup_steps': 1000,
+            'tags': None,
+            'tokenizer_max_length': 48,
+            'train_expert_only': True,
+            'train_state_proj': True,
+            'type': 'pi0',
+            'use_amp': False,
+            'use_cache': True,
+            'use_delta_joint_actions_aloha': False,
+            'use_ref': False},
+ 'resume': False,
+ 'save_checkpoint': True,
+ 'save_freq': 1000,
+ 'scheduler': {'decay_lr': 2.5e-06,
+               'num_decay_steps': 30000,
+               'num_warmup_steps': 1000,
+               'peak_lr': 2.5e-05,
+               'type': 'cosine_decay_with_warmup'},
+ 'seed': 1000,
+ 'steps': 200000,
+ 'use_policy_training_preset': True,
+ 'val_sample_num': 100,
+ 'wandb': {'disable_artifact': False,
+           'enable': True,
+           'entity': None,
+           'mode': 'online',
+           'notes': None,
+           'project': 'exp_gt_visual_gen',
+           'run_id': None}}
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/utils/dataclasses.py:1302: UserWarning: DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.
+  warnings.warn("DeepSpeed Zero3 Init flag is only applicable for ZeRO Stage 3. Setting it to False.")
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+wandb: setting up run 9evd3hib
+wandb: Tracking run with wandb version 0.23.0
+wandb: Run data is saved locally in /dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B/wandb/run-20251203_182743-9evd3hib
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B
+wandb: ⭐️ View project at https://wandb.ai/812666178-university-of-california-berkeley/exp_gt_visual_gen
+wandb: 🚀 View run at https://wandb.ai/812666178-university-of-california-berkeley/exp_gt_visual_gen/runs/9evd3hib
+Logs will be synced with wandb.
+wandb: WARNING The get_url method is deprecated and will be removed in a future release. Please use `run.url` instead.
+INFO 2025-12-03 18:27:46 db_utils.py:106 Track this run --> https://wandb.ai/812666178-university-of-california-berkeley/exp_gt_visual_gen/runs/9evd3hib
+INFO 2025-12-03 18:27:46 ain_dist.py:186 Creating dataset
+INFO 2025-12-03 18:29:00 ain_dist.py:230 Creating policy
+load Bagel: <All keys matched successfully>load Bagel: <All keys matched successfully>load Bagel: <All keys matched successfully>load Bagel: <All keys matched successfully>
+
+
+
+load Bagel: <All keys matched successfully>load Bagel: <All keys matched successfully>load Bagel: <All keys matched successfully>
+
+load Bagel: <All keys matched successfully>
+
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:31:59 ling_pi0.py:888 unfixed_num_params=13051250688 (13B)
+INFO 2025-12-03 18:32:10 ain_dist.py:238 Creating optimizer and scheduler
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/utils/cpp_extension.py:2356: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
+  warnings.warn(
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+Installed CUDA version 12.8 does not match the version torch was compiled with 12.6 but since the APIs are compatible, accepting this combination
+[2025-12-03 18:34:44,443] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+[2025-12-03 18:34:45,166] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+[2025-12-03 18:34:45,435] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+INFO 2025-12-03 18:34:45 ain_dist.py:289 Output dir: /dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/outputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B
+INFO 2025-12-03 18:34:45 ain_dist.py:292 cfg.steps=200000 (200K)
+INFO 2025-12-03 18:34:45 ain_dist.py:294 ============ Dataset Recipe =================
+INFO 2025-12-03 18:34:45 ain_dist.py:297 ds.repo_id='/dataset_rc_mm/share/datasets/huggingface.co/IPEC-COMMUNITY/bridge__lerobot': ds.num_frames=864292 (864K) ds.num_episodes=25460 (25K) ds.weight=1.0 ds.ds_type='action'
+INFO 2025-12-03 18:34:45 ain_dist.py:298 ============ Dataset Recipe End =================
+INFO 2025-12-03 18:34:45 ain_dist.py:299 num_learnable_params=13594866176 (14B)
+INFO 2025-12-03 18:34:45 ain_dist.py:300 num_total_params=14688267907 (15B)
+INFO 2025-12-03 18:34:45 ain_dist.py:301 Number of processes: 8
+INFO 2025-12-03 18:34:45 ain_dist.py:302 Device: cuda:0
+INFO 2025-12-03 18:34:45 ain_dist.py:303 Mixed precision: bf16
+INFO 2025-12-03 18:34:45 ain_dist.py:319 Start offline training on a fixed dataset
+[2025-12-03 18:34:47,421] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+[2025-12-03 18:34:48,558] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+[2025-12-03 18:34:48,662] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+[2025-12-03 18:34:48,734] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+[2025-12-03 18:34:49,041] [WARNING] [lr_schedules.py:690:get_lr] Attempting to get learning rate from scheduler before it has started
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torchvision/io/_video_deprecation_warning.py:5: UserWarning: The video decoding and encoding capabilities of torchvision are deprecated from version 0.22 and will be removed in version 0.24. We recommend that you migrate to TorchCodec, where we'll consolidate the future decoding/encoding capabilities of PyTorch: https://github.com/pytorch/torchcodec
+  warnings.warn(
+Yielding data with length 4507
+Yielding data with length 4587
+Yielding data with length 4470
+Yielding data with length 4492
+Yielding data with length 4483
+Yielding data with length 4449
+Yielding data with length 4487
+Yielding data with length 4525
+[rank4]: Traceback (most recent call last):
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank4]:     train()
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank4]:     response = fn(cfg, *args, **kwargs)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank4]:     train_tracker, output_dict = update_policy(
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank4]:     loss, output_dict = policy.forward(batch)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank4]:     ret_val = func(*args, **kwargs)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank4]:     loss = self.module(*inputs, **kwargs)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank4]:     return self._call_impl(*args, **kwargs)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank4]:     return inner()
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank4]:     result = forward_call(*args, **kwargs)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank4]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank4]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank4]:     return self._call_impl(*args, **kwargs)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank4]:     return forward_call(*args, **kwargs)
+[rank4]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank4]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank4]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+[rank2]: Traceback (most recent call last):
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank2]:     train()
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank2]:     response = fn(cfg, *args, **kwargs)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank2]:     train_tracker, output_dict = update_policy(
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank2]:     loss, output_dict = policy.forward(batch)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank2]:     ret_val = func(*args, **kwargs)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank2]:     loss = self.module(*inputs, **kwargs)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank2]:     return inner()
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank2]:     result = forward_call(*args, **kwargs)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank2]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank2]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank2]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank2]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+[rank5]: Traceback (most recent call last):
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank5]:     train()
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank5]:     response = fn(cfg, *args, **kwargs)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank5]:     train_tracker, output_dict = update_policy(
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank5]:     loss, output_dict = policy.forward(batch)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank5]:     ret_val = func(*args, **kwargs)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank5]:     loss = self.module(*inputs, **kwargs)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank5]:     return self._call_impl(*args, **kwargs)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank5]:     return inner()
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank5]:     result = forward_call(*args, **kwargs)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank5]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank5]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank5]:     return self._call_impl(*args, **kwargs)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank5]:     return forward_call(*args, **kwargs)
+[rank5]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank5]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank5]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+[rank7]: Traceback (most recent call last):
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank7]:     train()
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank7]:     response = fn(cfg, *args, **kwargs)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank7]:     train_tracker, output_dict = update_policy(
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank7]:     loss, output_dict = policy.forward(batch)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank7]:     ret_val = func(*args, **kwargs)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank7]:     loss = self.module(*inputs, **kwargs)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank7]:     return self._call_impl(*args, **kwargs)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank7]:     return inner()
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank7]:     result = forward_call(*args, **kwargs)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank7]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank7]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank7]:     return self._call_impl(*args, **kwargs)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank7]:     return forward_call(*args, **kwargs)
+[rank7]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank7]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank7]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank1]:     train()
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank1]:     response = fn(cfg, *args, **kwargs)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank1]:     train_tracker, output_dict = update_policy(
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank1]:     loss, output_dict = policy.forward(batch)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank1]:     ret_val = func(*args, **kwargs)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank1]:     loss = self.module(*inputs, **kwargs)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank1]:     return inner()
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank1]:     result = forward_call(*args, **kwargs)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank1]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank1]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank1]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank1]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+[rank6]: Traceback (most recent call last):
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank6]:     train()
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank6]:     response = fn(cfg, *args, **kwargs)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank6]:     train_tracker, output_dict = update_policy(
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank6]:     loss, output_dict = policy.forward(batch)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank6]:     ret_val = func(*args, **kwargs)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank6]:     loss = self.module(*inputs, **kwargs)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank6]:     return self._call_impl(*args, **kwargs)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank6]:     return inner()
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank6]:     result = forward_call(*args, **kwargs)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank6]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank6]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank6]:     return self._call_impl(*args, **kwargs)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank6]:     return forward_call(*args, **kwargs)
+[rank6]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank6]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank6]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+[rank3]: Traceback (most recent call last):
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank3]:     train()
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank3]:     response = fn(cfg, *args, **kwargs)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank3]:     train_tracker, output_dict = update_policy(
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank3]:     loss, output_dict = policy.forward(batch)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank3]:     ret_val = func(*args, **kwargs)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank3]:     loss = self.module(*inputs, **kwargs)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank3]:     return inner()
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank3]:     result = forward_call(*args, **kwargs)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank3]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank3]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank3]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank3]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+Traceback (most recent call last):
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+    train()
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+    train_tracker, output_dict = update_policy(
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+    loss, output_dict = policy.forward(batch)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+    loss = self.module(*inputs, **kwargs)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+    return inner()
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+    result = forward_call(*args, **kwargs)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+    loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+    ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+    packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+IndexError: tensors used as indices must be long, int, byte or bool tensors
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 522, in <module>
+[rank0]:     train()
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+[rank0]:     response = fn(cfg, *args, **kwargs)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 327, in train
+[rank0]:     train_tracker, output_dict = update_policy(
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py", line 101, in update_policy
+[rank0]:     loss, output_dict = policy.forward(batch)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+[rank0]:     ret_val = func(*args, **kwargs)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/deepspeed/runtime/engine.py", line 2179, in forward
+[rank0]:     loss = self.module(*inputs, **kwargs)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+[rank0]:     return inner()
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1805, in inner
+[rank0]:     result = forward_call(*args, **kwargs)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 711, in forward
+[rank0]:     loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling_pi0.py", line 999, in forward
+[rank0]:     ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/policies/pi0/modeling/bagel/bagel.py", line 340, in forward
+[rank0]:     packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+[rank0]: IndexError: tensors used as indices must be long, int, byte or bool tensors
+W1203 18:35:20.654604 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 2902911 closing signal SIGTERM
+W1203 18:35:20.657440 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 2902912 closing signal SIGTERM
+W1203 18:35:20.658018 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 2902914 closing signal SIGTERM
+W1203 18:35:20.658505 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 2902915 closing signal SIGTERM
+W1203 18:35:20.658826 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 2902917 closing signal SIGTERM
+W1203 18:35:20.658932 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 2902920 closing signal SIGTERM
+W1203 18:35:20.659035 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 2902922 closing signal SIGTERM
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mact-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B[0m at: [34m[0m
+[1;34mwandb[0m: Find logs at: [1;35moutputs/train/act-und-gen-ratio-1-0-1_model-und_data-tok-3G_model-param-16B/wandb/run-20251203_182743-9evd3hib/logs[0m
+E1203 18:35:29.835936 2890083 site-packages/torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 2 (pid: 2902913) of binary: /dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/bin/python3.10
+Traceback (most recent call last):
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/bin/accelerate", line 7, in <module>
+    sys.exit(main())
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/commands/accelerate_cli.py", line 50, in main
+    args.func(args)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/commands/launch.py", line 1266, in launch_command
+    deepspeed_launcher(args)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/accelerate/commands/launch.py", line 952, in deepspeed_launcher
+    distrib_run.run(args)
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/distributed/run.py", line 883, in run
+    elastic_launch(
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 139, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/envs/bagel_vla/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 270, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/dataset_rc_mm/tangwl3@xiaopeng.com/Bagel_VLA/src/lerobot/scripts/train_dist.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2025-12-03_18:35:20
+  host      : bifrost-2025120318252300-tangwl3-master-0
+  rank      : 2 (local_rank: 2)
+  exitcode  : 1 (pid: 2902913)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

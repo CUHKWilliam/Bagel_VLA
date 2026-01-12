@@ -1,0 +1,306 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# import swanlab
+# swanlab.sync_wandb()
+
+
+import logging
+import time
+from contextlib import nullcontext
+from pprint import pformat
+from typing import Any
+
+import torch
+from termcolor import colored
+from torch.amp import GradScaler
+from torch.optim import Optimizer
+import copy
+from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.datasets.utils import cycle
+from lerobot.envs.factory import make_env
+from lerobot.optim.factory import make_optimizer_and_scheduler
+from lerobot.policies.factory import make_policy
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import get_device_from_parameters
+from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
+from lerobot.utils.random_utils import set_seed
+from lerobot.utils.train_utils import (
+    get_step_checkpoint_dir,
+    get_step_identifier,
+    load_training_state,
+    save_checkpoint,
+    update_last_checkpoint,
+)
+from lerobot.utils.utils import (
+    format_big_number,
+    get_safe_torch_device,
+    has_method,
+    init_logging,
+)
+from lerobot.utils.wandb_utils import WandBLogger
+from lerobot.configs import parser
+from lerobot.configs.train import TrainPipelineConfig
+from accelerate import Accelerator
+from accelerate.utils import set_seed as accelerate_set_seed
+import os
+import numpy as np
+import cv2
+from lerobot.configs.train import TrainPipelineConfig
+from tqdm import tqdm
+import copy
+from lerobot.policies.pi0.dataset_base import PackedDataset, SimpleCustomBatch
+from torch.profiler import profile, ProfilerActivity, record_function
+
+
+TFLOPS_PER_GPU = 989.4   # TFLOPS
+
+
+def update_policy(
+    policy: PreTrainedPolicy,
+    batch: Any,
+    accelerator: Accelerator,
+    step: int = 0,
+) -> tuple[MetricsTracker, dict]:
+    device = get_device_from_parameters(policy)
+    policy.train()
+    loss, output_dict = policy.forward(batch, get_time=True)
+    dt = output_dict['time']
+    # policy.select_action(batch)
+    torch.cuda.synchronize()
+    t2 = time.time()
+    policy.backward(loss)
+    torch.cuda.synchronize()
+    # dt += time.time() - t2
+    return dt
+
+
+@parser.wrap()
+def train(cfg: TrainPipelineConfig):
+    cfg.type = "pi0"
+    cfg.validate()
+    logging.info(pformat(cfg.to_dict()))
+
+    if cfg.seed is not None:
+        set_seed(cfg.seed)
+    
+    # Initialize accelerator
+    from accelerate.utils import DistributedDataParallelKwargs
+
+    from lerobot.utils.wandb_utils import cfg_to_group, get_wandb_run_id_from_filesystem
+
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(
+        mixed_precision="no",
+        gradient_accumulation_steps=1,
+        log_with="wandb" if cfg.wandb.enable else None,
+        kwargs_handlers=[ddp_kwargs],
+        project_dir=cfg.output_dir,
+    )
+    if accelerator.is_main_process:
+        if cfg.wandb.enable and cfg.wandb.project:
+            wandb_logger = WandBLogger(cfg)
+        else:
+            wandb_logger = None
+            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
+
+    accelerator.init_trackers(
+        project_name=cfg.wandb.project,
+        init_kwargs={
+            "wandb": {
+                "entity": cfg.wandb.entity,
+                "name": cfg.job_name,
+                "notes": cfg.wandb.notes,
+                "tags": cfg_to_group(cfg, return_list=True),
+                "dir": cfg.output_dir,
+                "config": cfg.to_dict(),
+                "save_code": False,
+                "job_type": "train_eval",
+                "mode": cfg.wandb.mode if cfg.wandb.mode in ["online", "offline", "disabled"] else "online",
+                "resume": "must" if cfg.resume else None,
+                "id": cfg.wandb.run_id
+                if cfg.wandb.run_id
+                else (get_wandb_run_id_from_filesystem(cfg.output_dir) if cfg.resume else None),
+            }
+        },
+    )
+
+    # Set seed for reproducibility
+    if cfg.seed is not None:
+        accelerate_set_seed(cfg.seed)
+
+    # Setup device - accelerator handles device placement
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    # Create dataset
+    if accelerator.is_main_process:
+        logging.info("Creating dataset")
+    dataset = make_dataset(cfg)
+
+    # Create environment used for evaluating checkpoints during training on simulation data.
+    # On real-world data, no need to create an environment as evaluations are done outside train.py,
+    # using the eval.py instead, with gym_dora environment and dora-rs.
+    eval_envs = None
+    cfg.eval_freq = 0 ## TODO:
+    if cfg.eval_freq > 0: ## TODO:
+        logging.info("Creating libero env")
+        from libero.libero import benchmark
+        from libero.libero.envs import OffScreenRenderEnv
+        from libero.libero import get_libero_path
+        benchmark_dict = benchmark.get_benchmark_dict()
+        task_suite_name = "libero_90" # can also choose libero_spatial, libero_object, etc.
+        task_suite = benchmark_dict[task_suite_name]()
+        task_ids = list(range(200,))
+        eval_envs = []
+        for task_id in task_ids:
+            task = task_suite.get_task(task_id)
+            task_name = task.name
+            ## TODO: just for debug now
+            print(task_name)
+            if task_name != "KITCHEN_SCENE1_open_the_bottom_drawer_of_the_cabinet":
+                continue
+            task_description = task.language
+            task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+            print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
+                f"language instruction is {task_description}, and the bddl file is {task_bddl_file}")
+            
+            # step over the environment
+            env_args = {
+                "bddl_file_name": task_bddl_file,
+                "camera_heights": 256,
+                "camera_widths": 256
+            }
+            for _ in range(2):
+                env = OffScreenRenderEnv(**env_args)
+                env.seed(0)
+                env.reset()
+                eval_envs.append(env)
+            break
+        
+    if accelerator.is_main_process:
+        logging.info("Creating policy")
+    cfg.policy.device = "cpu"
+    policy = make_policy(
+        cfg=cfg.policy,
+        ds_meta=dataset.meta,
+    ).cpu()
+    torch.cuda.empty_cache()
+    if accelerator.is_main_process:
+        logging.info("Creating optimizer and scheduler")
+    # optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+
+    step = 0  # number of policy updates (forward + backward + optim)
+
+    # create dataloader for offline training
+    if hasattr(cfg.policy, "drop_n_last_frames"):
+        shuffle = False
+        sampler = EpisodeAwareSampler(
+            dataset.episode_data_index,
+            drop_n_last_frames=cfg.policy.drop_n_last_frames,
+            shuffle=True,
+        )
+    else:
+        shuffle = True
+        sampler = None
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        num_workers=0, # cfg.num_workers, ## TODO: set worker
+        batch_size=cfg.batch_size,
+        shuffle=shuffle,
+        sampler=sampler,
+        pin_memory=False,
+        drop_last=False,
+    )
+    def get_model_param_count(model, trainable_only=False):
+        def numel(p):
+            try:
+                return p.ds_numel
+            except:
+                return p.numel()
+        return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
+    
+    if cfg.resume:
+        checkpoint_path = cfg.output_dir / "checkpoints" / "last"
+        step, _, _ = load_training_state(checkpoint_path, None, None)
+    
+    # Prepare for distributed training
+    policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
+        policy, 
+        None,
+        dataloader, 
+        None,
+    )
+ 
+    # Log training info (only on main process)
+    if accelerator.is_main_process:
+        num_learnable_params = get_model_param_count(policy, trainable_only=True)
+        num_total_params = get_model_param_count(policy, trainable_only=False)
+
+        logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+        if cfg.env is not None:
+            logging.info(f"{cfg.env.task=}")
+        logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
+        logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
+        logging.info(f"{dataset.num_episodes=}")
+        logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
+        logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
+        logging.info(f"Number of processes: {accelerator.num_processes}")
+        logging.info(f"Device: {accelerator.device}")
+        logging.info(f"Mixed precision: {accelerator.mixed_precision}")
+        flops_per_token = 2*num_total_params
+   
+    policy.train()
+    if accelerator.is_main_process:
+        logging.info("Start offline training on a fixed dataset")
+    # Create iterator from dataloader
+    dl_iter = iter(dataloader)
+    time_total = 0
+    seq_len_total = 0
+    for step in tqdm(range(20)):
+        try:
+            batch = next(dl_iter)
+            batch2 = copy.deepcopy(batch)
+        except StopIteration:
+            dl_iter = iter(dataloader)
+            batch = next(dl_iter)
+        t = update_policy(
+                policy,
+                batch,
+                accelerator,
+                step,
+        )
+        if step < 10:
+            continue
+        time_total += t
+        datas = policy.dataset(batch2)
+        data_batch = SimpleCustomBatch([datas]).cuda(f"cuda:{torch.cuda.current_device()}").to_dict()
+        seq_length = data_batch['sequence_length']
+        seq_len_total += seq_length
+
+        if accelerator.is_main_process:
+            print(seq_length)
+            tokens_per_sec = seq_len_total / time_total
+            achieved_flops = tokens_per_sec * flops_per_token
+            theroretical_flops = TFLOPS_PER_GPU * 1e12
+            mfu = achieved_flops / theroretical_flops
+            print(f"MFU: {mfu}")
+
+if __name__ == "__main__":
+    init_logging()
+    train()
