@@ -259,7 +259,7 @@ def train(cfg: TrainPipelineConfig):
     train_sampler = CustomWeightedRandomSampler(weights=train_sample_weights, num_samples=len(train_sample_weights), accelerator=accelerator)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=0, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
+        num_workers=32, # multiprocessing.cpu_count(), # cfg.num_workers, ## TODO: set worker
         batch_size=1,
         shuffle=True,
         # sampler=train_sampler,
