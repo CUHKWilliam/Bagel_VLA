@@ -66,7 +66,7 @@ class Args:
     Evaluation arguments for smolVLA on LIBERO.
     """
     # --- LIBERO environment-specific parameters ---
-    task_suite_name: str = "libero_goal"
+    task_suite_name: str = "libero_object"
     """Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90"""
     num_steps_wait: int = 10
     """Number of steps to wait for objects to stabilize in sim."""

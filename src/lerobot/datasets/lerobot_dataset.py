@@ -741,10 +741,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return item
 
     def __len__(self):
-        return self.num_frames
+        return 100 * (self.num_frames)
 
     def __getitem__(self, idx) -> dict:
-        
+        idx = idx % self.num_frames
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 

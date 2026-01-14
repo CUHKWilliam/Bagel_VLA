@@ -676,6 +676,7 @@ class PackedDataset:
                 try:
                     batch = next(dl_iter)
                 except StopIteration:
+                    print("StopIteration:!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                     dl_iter = iter(batch_dataloader)
                     batch = next(dl_iter)
                 data_index = batch.pop('data_index')
