@@ -78,6 +78,48 @@ from scipy.spatial.transform import Rotation as R
 
 CODEBASE_VERSION = "v2.1"
 
+ROBOT_TYPE_TO_PROMPT_MAPS = {
+        0: "action format:x,y,z,roll,pitch,yaw,gripper",
+        1: "action format:motor_0,motor_1,motor_2,motor_3,motor_4,motor_5,motor_6,gripper",
+        2: "action format:left_x,left_y,left_z,left_quaternion_x,left_quaternion_y,left_quaternion_z,left_quaternion_w,left_gripper,right_x,right_y,right_z,right_quaternion_x,right_quaternion_y,right_quaternion_z,right_quaternion_w,right_gripper",
+        3: "action format:left_motor_0,left_motor_1,left_motor_2,left_motor_3,left_motor_4,left_motor_5,left_motor_6,left_gripper,right_motor_0,right_motor_1,right_motor_2,right_motor_3,right_motor_4,right_motor_5,right_motor_6,right_gripper"
+}
+
+## TODO: write it here for now
+DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS = {
+    "austin_buds_dataset_lerobot": 0,          # 0 for single arm EEF(pos+rpy) + gripper control
+    "austin_sailor_dataset_lerobot": 0,
+    "austin_sirius_dataset_lerobot": 0,
+    "bc_z_lerobot": 0,
+    "berkeley_autolab_ur5_lerobot": 0,
+    "berkeley_cable_routing_lerobot": 0,
+    "berkeley_fanuc_manipulation_lerobot": 0,
+    "berkeley_mvp_lerobot": 1, # 1 for single arm 7-dof joint + grpiper control
+    "berkeley_rpt_lerobot": 1,
+    "bridge_orig_lerobot": 0,
+    "cmu_play_fusion_lerobot": 0,
+    "cmu_stretch_lerobot": 0,
+    "dlr_edan_shared_control_lerobot": 0,
+    "dobbe_lerobot": 0,
+    "droid_lerobot": 0,
+    "fmb_dataset_lerobot": 0,
+    "furniture_bench_dataset_lerobot": 0,
+    "iamlab_cmu_pickup_insert_lerobot": 0,
+    "jaco_play_lerobot": 0,
+    "kuka_lerobot": 0,
+    "language_table_lerobot": 0,
+    "nyu_door_opening_surprising_effectiveness_lerobot": 0,
+    "nyu_franka_play_dataset_lerobot": 0,
+    "roboturk_lerobot": 0,
+    "stanford_hydra_dataset_lerobot": 0,
+    "taco_play_lerobot": 0,
+    "toto_lerobot": 0,
+    "ucsd_kitchen_dataset_lerobot": 0,
+    "utaustin_mutex_lerobot": 0,
+    "viola_lerobot": 0,
+    "agibot": 2,        
+    "galaxea": 3,       
+}
 
 class LeRobotDatasetMetadata:
     def __init__(
@@ -108,7 +150,7 @@ class LeRobotDatasetMetadata:
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-
+        
         if self._version < packaging.version.parse("v2.1"):
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
@@ -482,7 +524,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         stats = self.meta.stats
         if 'action' not in stats.keys():
             ## for Galaxea
-            if "action.left_gripper" in stats.keys() and "action.left_arm" in stats.keys():
+            if "action.left_arm" in stats.keys():
                 left_action_min = np.concatenate([stats['action.left_arm']['min'], stats['action.left_gripper']['min']], axis=-1)
                 right_action_min = np.concatenate([stats['action.right_arm']['min'], stats['action.right_gripper']['min']], axis=-1)
                 action_min = np.concatenate([left_action_min, right_action_min], axis=-1)
@@ -822,8 +864,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
         item = self.unify_keys(item)
+        # item = self.assign_dataset_index(item)
         return item
     
+    def assign_dataset_index(self, item):
+        repo_id =  self.meta.repo_id
+        dataset_idx = None
+        for dataset_keyword in DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS.keys():
+            if dataset_keyword in repo_id:
+                dataset_idx = DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS[dataset_keyword]
+        assert dataset_idx is not None
+        robot_related_prompt = ROBOT_TYPE_TO_PROMPT_MAPS[dataset_idx]
+        item['task'] = f"{item['task']}{robot_related_prompt}."
+        
+
     def unify_keys(self, item):
         ## if key wrist in item, make it left_wrist for unifying keys between humanoid and single-arm robots
         item_keys = list(item.keys())
@@ -1381,6 +1435,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        np.random.seed(idx)
         dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
         item = dataset[int(np.random.choice(np.arange(len(dataset))))]
         item["dataset_index"] = torch.tensor(0) ## TODO: no use
@@ -1388,6 +1443,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             if data_key in item:
                 del item[data_key]
         return item
+
 
     def __repr__(self):
         return (
