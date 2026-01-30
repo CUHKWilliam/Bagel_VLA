@@ -75,6 +75,13 @@ from lerobot.datasets.video_utils import (
 import torchvision.transforms as transforms
 import time
 from scipy.spatial.transform import Rotation as R
+from threading import Lock
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from pathlib import Path
+from threading import Lock
+from typing import Any
 
 CODEBASE_VERSION = "v2.1"
 
@@ -118,7 +125,10 @@ DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS = {
     "utaustin_mutex_lerobot": 0,
     "viola_lerobot": 0,
     "agibot": 2,        
-    "galaxea": 3,       
+    "galaxea": 3,  
+    "egodex": 4,     
+    "gr00t": 5,
+    "new_embodiment": 0,
 }
 
 class LeRobotDatasetMetadata:
@@ -503,7 +513,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
-        self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
         self.use_ref = use_ref
@@ -524,7 +533,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         stats = self.meta.stats
         if 'action' not in stats.keys():
             ## for Galaxea
-            if "action.left_arm" in stats.keys():
+            if "action.left_gripper" in stats.keys() and "action.left_arm" in stats.keys():
                 left_action_min = np.concatenate([stats['action.left_arm']['min'], stats['action.left_gripper']['min']], axis=-1)
                 right_action_min = np.concatenate([stats['action.right_arm']['min'], stats['action.right_gripper']['min']], axis=-1)
                 action_min = np.concatenate([left_action_min, right_action_min], axis=-1)
@@ -542,6 +551,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 right_action_max = np.concatenate([stats['actions.end.position']['max'][1, :], stats['actions.end.orientation']['max'][1, :], stats['actions.effector.position']['max'][1, None]], axis=-1)
                 action_max = np.concatenate([left_action_max, right_action_max], axis=-1)
                 stats['action'] = {'max': action_max, 'min': action_min}
+        else:
+            # for egodex
+            if len(stats['action']['min']) > 50:
+                stats['action']['min'] = stats['action']['min'][[36,37,38,39,40,41,42,43,44]]
+                stats['action']['max'] = stats['action']['max'][[324,325,326,327,328,329,330,331,332]]
+            elif len(stats['action']['min']) > 40:
+                # for gr00t
+                stats['action']['min'] = stats['action']['min'][[7,8,9,10,11,12,29,30,31,32,33,34]]
+                stats['action']['max'] = stats['action']['max'][[7,8,9,10,11,12,29,30,31,32,33,34]]
         padded_min = np.zeros((32,))
         padded_min[:len(stats['action']['min'])] = stats['action']['min']
         stats['action']['min'] = padded_min
@@ -554,7 +572,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         try:
             if force_cache_sync:
                 raise FileNotFoundError
-            assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
+            print(len(self.get_episodes_file_paths()))
+            # assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
             self.hf_dataset = self.load_hf_dataset()
         except (AssertionError, FileNotFoundError, NotADirectoryError):
             self.revision = get_safe_version(self.repo_id, self.revision)
@@ -815,7 +834,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 action = np.concatenate([left_action, right_action], axis=-1)
                 query_result['action'] = action
                 item['action'] = action
-
+        else:
+            # for egodex
+            if len(item['action']) > 50:
+                item['action'] = item['action'][[36,37,38,39,40,41,42,43,44]]
+                query_result['action'] = item['action']
+            elif len(item['action']) > 40:
+                # for gr00t
+                item['action'] = item['action'][[7,8,9,10,11,12,29,30,31,32,33,34]]
+                query_result['action'] = item['action']
         
         item['ref_action'] = item['action'][:ref_num]
         item['action'] = item['action'][ref_num:]
@@ -864,18 +891,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
         item = self.unify_keys(item)
-        # item = self.assign_dataset_index(item)
+        item = self.get_robotype_ids(item)
         return item
     
-    def assign_dataset_index(self, item):
+    def get_robotype_ids(self, item):
         repo_id =  self.meta.repo_id
-        dataset_idx = None
+        robotype_ids = None
         for dataset_keyword in DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS.keys():
-            if dataset_keyword in repo_id:
-                dataset_idx = DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS[dataset_keyword]
-        assert dataset_idx is not None
-        robot_related_prompt = ROBOT_TYPE_TO_PROMPT_MAPS[dataset_idx]
-        item['task'] = f"{item['task']}{robot_related_prompt}."
+            if dataset_keyword in repo_id.lower():
+                robotype_ids = DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS[dataset_keyword]
+        assert robotype_ids is not None
+        item['robotype_ids'] = robotype_ids
+        return item
         
 
     def unify_keys(self, item):
@@ -1262,28 +1289,45 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         use_ref=True,
+        accelerator=None,
     ):
         super().__init__()
         self.repo_ids = repo_ids
+        self.episodes = episodes
+        self.download_videos = download_videos
+        self.video_backend = video_backend
+
         self.root = Path(root) if root else HF_LEROBOT_HOME
         self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
-        self._datasets = []
-        for repo_id in repo_ids:
-            self._datasets.append(
-                LeRobotDataset(
-                    repo_id,
-                    root=self.root / repo_id,
-                    episodes=episodes[repo_id] if episodes else None,
-                    image_transforms=image_transforms,
-                    delta_timestamps=delta_timestamps,
-                    tolerance_s=self.tolerances_s[repo_id],
-                    download_videos=download_videos,
-                    video_backend=video_backend,
-                    use_ref=use_ref,
-                )
-            )
+
+        self.image_transforms = image_transforms
+        self.delta_timestamps = delta_timestamps
+        self.use_ref = use_ref
+        max_workers = 8 ## TODO: set wroker for parallel process
+
+        self._datasets = self._load_datasets_threaded(max_workers)
+        self.accelerator = accelerator
+
+        # self._datasets = []
+        # for repo_id in repo_ids:
+        #     try:
+        #         self._datasets.append(
+        #             LeRobotDataset(
+        #                 repo_id,
+        #                 root=self.root / repo_id,
+        #                 episodes=episodes[repo_id] if episodes else None,
+        #                 image_transforms=image_transforms,
+        #                 delta_timestamps=delta_timestamps,
+        #                 tolerance_s=self.tolerances_s[repo_id],
+        #                 download_videos=download_videos,
+        #                 video_backend=video_backend,
+        #                 use_ref=use_ref,
+        #             )
+        #         )
+        #     except Exeption as e:
+        #         print("fail loading dataset:", repo_id, e)
 
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
@@ -1307,8 +1351,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             self.disabled_features.update(extra_keys)
         '''
 
-        self.image_transforms = image_transforms
-        self.delta_timestamps = delta_timestamps
+        
         # TODO(rcadene, aliberts): We should not perform this aggregation for datasets
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
@@ -1339,6 +1382,16 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                     right_action_max = np.concatenate([stats['actions.end.position']['max'][1, :], stats['actions.end.orientation']['max'][1, :], stats['actions.effector.position']['max'][1, None]], axis=-1)
                     action_max = np.concatenate([left_action_max, right_action_max], axis=-1)
                     stats['action'] = {'max': action_max, 'min': action_min}
+            else:
+                # for egodex
+                if len(stats['action']['min']) > 50:
+                    stats['action']['min'] = stats['action']['min'][[36,37,38,39,40,41,42,43,44]]
+                    stats['action']['max'] = stats['action']['max'][[324,325,326,327,328,329,330,331,332]]
+                elif len(stats['action']['min']) > 40:
+                    # for gr00t
+                    stats['action']['min'] = stats['action']['min'][[7,8,9,10,11,12,29,30,31,32,33,34]]
+                    stats['action']['max'] = stats['action']['max'][[7,8,9,10,11,12,29,30,31,32,33,34]]
+
             padded_min = np.zeros((32,))
             padded_min[:len(stats['action']['min'])] = stats['action']['min']
             stats['action']['min'] = padded_min
@@ -1350,6 +1403,105 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             aggregated_stats['action']['min'] = np.min( [aggregated_stats['action']['min'], stats['action']['min']], axis=0)
             aggregated_stats['action']['max'] = np.max([aggregated_stats['action']['max'], stats['action']['max']], axis=0)
         self.stats = aggregated_stats
+
+    def _load_datasets_threaded(self, max_workers: int | None = None) -> list[LeRobotDataset]:
+        """Load all datasets using multiple threads.
+
+        Args:
+            max_workers: Maximum number of worker threads. If None, uses min(8, len(repo_ids)).
+
+        Returns:
+            List of successfully loaded LeRobotDataset instances.
+        """
+        num_repos = len(self.repo_ids)
+        if num_repos == 0:
+            return []
+
+        workers = 1
+
+        # For single dataset or single worker, use sequential loading
+        # if num_repos <= 1 or workers <= 1:
+        #     return self._load_datasets_sequential()
+
+        datasets_list: list[LeRobotDataset] = []
+        failed_repos: list[tuple[str, str]] = []
+
+        # Thread-safe counters for progress tracking
+        lock = Lock()
+        completed_count = [0]
+
+        start_time = time.time()
+        print(f"Starting parallel load of {num_repos} datasets with {workers} workers...")
+
+        def load_single_dataset(repo_id: str) -> tuple[str, LeRobotDataset | None, str | None]:
+            """Load a single dataset and return (repo_id, dataset, error_message)."""
+            try:
+                thread = threading.current_thread()
+                thread_id = thread.ident  # Unique thread identifier
+                thread_name = thread.name
+                print(f"[Thread-{thread_id} ({thread_name})] Loading {repo_id}")
+
+                ds = LeRobotDataset(
+                    repo_id,
+                    root=self.root / repo_id,
+                    episodes=self.episodes[repo_id] if self.episodes else None,
+                    image_transforms=self.image_transforms,
+                    delta_timestamps=self.delta_timestamps,
+                    tolerance_s=self.tolerances_s[repo_id],
+                    download_videos=self.download_videos,
+                    video_backend=self.video_backend,
+                    use_ref=self.use_ref,
+                )
+
+                # Update progress counter
+                with lock:
+                    completed_count[0] += 1
+                    print(
+                        f"[{completed_count[0]}/{num_repos}] Loaded: {repo_id} "
+                        f"({ds.num_episodes} episodes, {ds.num_frames} frames)"
+                    )
+
+                return (repo_id, ds, None)
+            except Exception as e:
+                with lock:
+                    completed_count[0] += 1
+                    print(f"[{completed_count[0]}/{num_repos}] Failed to load: {repo_id}")
+
+                return (repo_id, None, str(e))
+
+        # Use ThreadPoolExecutor for parallel loading
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Submit all tasks
+            future_to_repo = {
+                executor.submit(load_single_dataset, repo_id): repo_id
+                for repo_id in self.repo_ids
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_repo):
+                repo_id, ds, error = future.result()
+                if ds is not None:
+                    datasets_list.append(ds)
+                else:
+                    failed_repos.append((repo_id, error))
+
+        elapsed_time = time.time() - start_time
+
+        # Log summary
+        print(
+            f"Dataset loading complete in {elapsed_time:.2f}s: "
+            f"{len(datasets_list)} succeeded, {len(failed_repos)} failed"
+        )
+
+        if failed_repos:
+            for repo_id, error in failed_repos:
+                print(f"Failed to load {repo_id}: {error}")
+
+        # Sort datasets by their original order in repo_ids for deterministic behavior
+        repo_id_order = {repo_id: idx for idx, repo_id in enumerate(self.repo_ids)}
+        datasets_list.sort(key=lambda ds: repo_id_order.get(ds.repo_id, float('inf')))
+
+        return datasets_list
 
     @property
     def repo_id_to_index(self):
@@ -1435,15 +1587,16 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        np.random.seed(idx)
-        dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
-        item = dataset[int(np.random.choice(np.arange(len(dataset))))]
+        # np.random.seed(idx)
+        dataset = self._datasets[np.random.randint(0, len(self._datasets))] ## TODO:
+        # dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
+        # np.random.seed(self.accelerator.process_index)
+        item = dataset[np.random.randint(0, len(dataset)) + self.accelerator.process_index]
         item["dataset_index"] = torch.tensor(0) ## TODO: no use
         for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]
         return item
-
 
     def __repr__(self):
         return (

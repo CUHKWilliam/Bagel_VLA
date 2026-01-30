@@ -40,6 +40,8 @@ class BagelConfig(PretrainedConfig):
         interpolate_pos=False,
         timestep_shift=1.0,
         action_dim=7,
+        max_num_robot_types = 10,
+        robot_type_prompt_len = 30,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -63,6 +65,8 @@ class BagelConfig(PretrainedConfig):
         self.ce_weight: float = 1.0
         self.ce_loss_reweighting: bool = False
         self.action_mse_weight: float = 1.0
+        self.max_num_robot_types: int = 10
+        self.robot_type_prompt_len: int = 30
 
 
 class PaliGemmaWithExpertConfig(PretrainedConfig):
@@ -191,6 +195,10 @@ class Bagel(PreTrainedModel):
         self.vae2llm = nn.Linear(self.patch_latent_dim, self.hidden_size)
         self.llm2vae = nn.Linear(self.hidden_size, self.patch_latent_dim)
         self.latent_pos_embed = PositionEmbedding(self.max_latent_size, self.hidden_size)
+        # trainable list of parameters, each of which is in the shape (TOTAL_ROBOT_TYPES, self.hidden_size)
+        self.robot_type_embedding_list = nn.ParameterList(
+            [nn.Parameter(torch.zeros(self.config.robot_type_prompt_len, self.hidden_size), requires_grad=True) for _ in range(self.config.max_num_robot_types)]
+        )
 
         if config.visual_und:
             self.vit_model = vit_model
@@ -269,9 +277,19 @@ class Bagel(PreTrainedModel):
             packed_timesteps: 1-D float tensor, flow timesteps. 0 indicates use clean image.
             mse_loss_indexes: 1-D bool tensor, where to compute mse loss.
         """
+        packed_robot_type_ids = kwargs["packed_robotype_ids"]
+        packed_robotype_indexes = kwargs['packed_robotype_indexes']
+        robot_type_embeds = []
+        for ids in packed_robot_type_ids:
+            robot_type_embed = self.robot_type_embedding_list[ids]
+            robot_type_embeds.append(robot_type_embed)
+        
+        packed_robot_type_embeds = torch.cat(robot_type_embeds, dim=0)
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros(size=(sequence_length, self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
+        packed_sequence[packed_robotype_indexes] = packed_robot_type_embeds
+
         if nested_attention_masks is None:
             sparse_mask = create_sparse_mask(sample_lens, split_lens, attn_modes, packed_text_embedding.device)
             seqlen = sum(sample_lens)
@@ -348,6 +366,43 @@ class Bagel(PreTrainedModel):
             ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
         return dict(mse=mse, ce=ce, last_hidden_state=last_hidden_state, past_key_values=past_key_values)
 
+    def prepare_robotype(self, curr_kvlens, curr_rope, robot_type_ids):
+        token_seqlens, packed_tokens, packed_token_indexes = list(), list(), list()
+        packed_seqlens, packed_position_ids, packed_indexes = list(), list(), list()
+        packed_key_value_indexes = list()
+
+        _curr = curr = 0
+        newlens, new_rope = list(), list()
+        for robot_type_id, curr_kvlen, curr_position_id in zip(robot_type_ids, curr_kvlens, curr_rope):
+            packed_key_value_indexes.extend(range(curr, curr + curr_kvlen))
+            curr += curr_kvlen
+
+            embodiment_tokens = self.robot_type_embedding_list[robot_type_id]
+            
+            packed_tokens.append(embodiment_tokens)
+            num_tokens = packed_tokens.shape[0]
+            token_seqlens.append(num_tokens)
+            packed_token_indexes.extend(range(_curr, _curr + num_img_tokens))
+            packed_indexes.extend(range(curr, curr + num_img_tokens))
+            curr += num_img_tokens
+            _curr += num_img_tokens
+
+            packed_position_ids.extend([curr_position_id] * num_tokens)
+            packed_seqlens.append(num_img_tokens)
+            newlens.append(curr_kvlen + num_tokens)
+            new_rope.append(curr_position_id + 1)
+
+        generation_input = {
+            "token_seqlens": torch.tensor(token_seqlens, dtype=torch.int),
+            "packed_tokens": torch.cat(packed_tokens, dim=0),
+            "packed_position_ids": torch.cat(packed_position_ids, dim=0),
+            "packed_token_indexes": torch.tensor(packed_token_indexes, dtype=torch.long),
+            "packed_seqlens": torch.tensor(packed_seqlens, dtype=torch.int),
+            "packed_indexes": torch.tensor(packed_indexes, dtype=torch.long),
+            "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
+            "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
+        }
+
     def prepare_prompts(self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids):
         packed_text_ids = list()
         packed_text_position_ids = list()
@@ -416,6 +471,40 @@ class Bagel(PreTrainedModel):
 
         return generation_input, newlens, new_rope
 
+    def forward_cache_update_robotype(
+        self,
+        past_key_values,    
+        token_seqlens,
+        packed_tokens,
+        packed_position_ids,
+        packed_token_indexes,
+        packed_seqlens,
+        packed_indexes,
+        packed_key_value_indexes,
+        key_values_lens,
+    ):
+        import ipdb;ipdb.set_trace()
+        extra_inputs = {}
+        if self.use_moe:
+            extra_inputs = {"mode": "und"}
+
+        output = self.language_model.forward_inference(
+            packed_query_sequence=packed_text_embedding,
+            query_lens=text_token_lens,
+            packed_query_position_ids=packed_text_position_ids,
+            packed_query_indexes=packed_text_indexes,
+            past_key_values=past_key_values,
+            packed_key_value_indexes=packed_key_value_indexes,
+            key_values_lens=key_values_lens,
+            update_past_key_values=True,
+            is_causal=False,
+            **extra_inputs,
+        )
+        past_key_values = output.past_key_values
+
+        return past_key_values
+
+    
     @torch.no_grad
     def forward_cache_update_text(
         self,

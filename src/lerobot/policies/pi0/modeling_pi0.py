@@ -1,4 +1,4 @@
-# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
+# g Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -100,6 +100,7 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
+from lerobot.datasets.lerobot_dataset import DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS
 def autocast(data_batch, dtype1, dtype2):
     for key in data_batch.keys():
         value = data_batch[key]
@@ -124,12 +125,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=6000,
+        default=5000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=6000,
+        default=5000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -223,7 +224,7 @@ class ModelArguments:
 class TrainingArguments:
     # --- modality switches ---
     visual_gen: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Train image generation branch."}
     )
     visual_und: bool = field(
@@ -483,7 +484,6 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-
         if hasattr(config, "dataset_stats"):
             dataset_stats = config.dataset_stats
         if dataset_stats is not None:
@@ -511,6 +511,8 @@ class PI0Policy(PreTrainedPolicy):
         dataset_config.text_cond_dropout_prob = model_args.text_cond_dropout_prob
         dataset_config.vae_cond_dropout_prob = model_args.vae_cond_dropout_prob
         dataset_config.vit_cond_dropout_prob = model_args.vit_cond_dropout_prob
+        dataset_config.max_num_robot_types = self.model.bagel_model.config.max_num_robot_types
+        dataset_config.robot_type_prompt_len = self.model.bagel_model.config.robot_type_prompt_len
         self.dataset = PackedDataset(
             dataset_config,
             tokenizer=self.model.tokenizer,
@@ -539,16 +541,17 @@ class PI0Policy(PreTrainedPolicy):
         self.use_ref = config.use_ref
     
     def normalize_actions(self, actions):
-        actions -= self.dataset_stats['action']['min']
-        actions /= (self.dataset_stats['action']['max'] - self.dataset_stats['action']['min']) + 1e-6
+        actions = actions.cuda()
+        actions -= self.dataset_stats['action']['min'].cuda()
+        actions /= (self.dataset_stats['action']['max'].cuda() - self.dataset_stats['action']['min'].cuda()) + 1e-6
         actions = actions * 2 - 1
         actions = torch.clamp(actions, -1, 1)
         return actions
 
     def unnormalize_actions(self, actions):
         actions = (actions + 1) / 2.
-        actions *= (self.dataset_stats['action']['max'] - self.dataset_stats['action']['min'])
-        actions += self.dataset_stats['action']['min']
+        actions *= (self.dataset_stats['action']['max'].cuda() - self.dataset_stats['action']['min'].cuda())
+        actions += self.dataset_stats['action']['min'].cuda()
         return actions
 
 
@@ -1283,6 +1286,19 @@ class PI0FlowMatching(nn.Module):
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
         past_key_values = self.bagel_model.forward_cache_update_text(past_key_values, **generation_input)
+        ## add robotype
+        robotype = "new_embodiment"
+        robotype_id = DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS[rototype]
+        generation_input, newlens, new_rope = self.bagel_model.prepare_robotype(
+            curr_kvlens=newlens,
+            curr_rope=new_rope, 
+            robotype_id=[robotype_id],
+        )
+        for k, v in generation_input.items():
+            if torch.is_tensor(v):
+                generation_input[k] = v.to(device)
+        past_key_values = self.bagel_model.forward_cache_update_rototype(past_key_values, **generation_input)
+
         # TODO: decode for text generation
         # generation_input = self.prepare_start_tokens(newlens, new_rope, new_token_ids)
         # for k, v in generation_input.items():

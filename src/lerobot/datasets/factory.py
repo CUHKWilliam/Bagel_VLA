@@ -82,29 +82,30 @@ def resolve_delta_timestamps(
 
 
 class ConcatDatasetWithIndex(Dataset):
-    def __init__(self, inputs):
-        self.ds = ConcatDataset(inputs)
-        self.dataset_lists = inputs
+    def __init__(self, inputs, accelerator):
+        self.datasets = inputs
         self.stats = None
         for inp in inputs:
             if hasattr(inp, "stats") and inp.stats is not None:
                 self.stats = inp.stats
-
     def __getitem__(self, index):
         while True:
-            try:
-                selected_dataset = self.dataset_lists[np.random.randint(low=0, high=len(self.dataset_lists))]
-                data = selected_dataset[index]
-                break
-            except Exception as e:
-                print(f'fail loading at {index}: {e}')
-                index += 1
-                continue
-        data['data_index'] = index
+            # try:
+            selected_dataset = self.datasets[index % len(self.datasets)]
+            data = selected_dataset[index]
+            break
+        #     except Exception as e:
+        #         print(f'fail loading at {index}: {e}')
+        #         index += 1
+        #         continue
+        # data['data_index'] = index
         return data
     
     def __len__(self, ):
-        return len(self.ds)
+        length = 0
+        for ds in self.datasets:
+            length += len(ds)
+        return length
 
 def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
@@ -140,43 +141,60 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
                 video_backend=cfg.dataset.video_backend,
                 use_ref=cfg.policy.use_ref,
             )
+            stats = dataset.stats
             # if cfg.dataset.use_imagenet_stats:
             #     for key in dataset.meta.camera_keys:
             #         for stats_type, stats in IMAGENET_STATS.items():
             #             dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
         else:
+            repo_id2 = []
             if isinstance(cfg.dataset.repo_id, str):
-                cfg.dataset.repo_id = glob.glob(cfg.dataset.repo_id)
+                repo_id2.append(glob.glob(cfg.dataset.repo_id))
             elif isinstance(cfg.dataset.repo_id, list):
-                repo_id2 = []
                 for a_repo_id in cfg.dataset.repo_id:
                     if "*" in a_repo_id:
-                        repo_id2 += glob.glob(a_repo_id)
+                        repo_id2.append(glob.glob(a_repo_id))
                     else:
-                        repo_id2.append(a_repo_id)
+                        repo_id2.append([a_repo_id])
                 cfg.dataset.repo_id = repo_id2
-            dataset = MultiLeRobotDataset(
-                cfg.dataset.repo_id,
+            repo_id2_flatten = []
+            for a_repo_id2 in repo_id2:
+                dataset = MultiLeRobotDataset(
+                    a_repo_id2,
+                    # TODO(aliberts): add proper support for multi dataset
+                    # delta_timestamps=delta_timestamps,
+                    image_transforms=image_transforms,
+                    video_backend=cfg.dataset.video_backend,
+                    episodes=cfg.dataset.episodes,
+                    use_ref=cfg.policy.use_ref,
+                    accelerator=accelerator,
+                )
+                for a_dataset in dataset._datasets:
+                    ds_meta = LeRobotDatasetMetadata(a_dataset.repo_id, root=a_dataset.root, revision=a_dataset.revision)
+                    delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+                    a_dataset.delta_timestamps = delta_timestamps
+                    a_dataset.delta_indices = get_delta_indices(a_dataset.delta_timestamps, a_dataset.fps)
+                all_datasets.append(dataset)
+                repo_id2_flatten += a_repo_id2
+            dataset_for_stats = MultiLeRobotDataset(
+                repo_id2_flatten,
                 # TODO(aliberts): add proper support for multi dataset
                 # delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 video_backend=cfg.dataset.video_backend,
                 episodes=cfg.dataset.episodes,
                 use_ref=cfg.policy.use_ref,
+                accelerator=accelerator,
             )
-            for a_dataset in dataset._datasets:
-                ds_meta = LeRobotDatasetMetadata(a_dataset.repo_id, root=a_dataset.root, revision=a_dataset.revision)
-                delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
-                a_dataset.delta_timestamps = delta_timestamps
-                a_dataset.delta_indices = get_delta_indices(a_dataset.delta_timestamps, a_dataset.fps)
-
+            stats = dataset_for_stats.stats
+           
             # dataset.meta = copy.deepcopy(dataset._datasets[0].meta)
             # if cfg.dataset.use_imagenet_stats:
             #     for a_dataset in dataset._datasets:
             #         for key in dataset.meta.camera_keys:
             #             for stats_type, stats in IMAGENET_STATS.items():
             #                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
-        all_datasets.append(dataset)
+        # all_datasets.append(dataset)
 
     if cfg.dataset.vqa_repo_id is not None:
         if "," in cfg.dataset.vqa_repo_id and not "*" in cfg.dataset.vqa_repo_id:
@@ -199,7 +217,9 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
                 cfg.dataset.vqa_repo_id,
                 transform=image_transforms,
             )
-        all_datasets.append(dataset)
+            for a_dataset in dataset._datasets:
+                all_datasets.append(a_dataset)
+        # all_datasets.append(dataset)
     if cfg.dataset.video_repo_id is not None:
         if "," in cfg.dataset.video_repo_id and not "*" in cfg.dataset.video_repo_id:
             cfg.dataset.video_repo_id = cfg.dataset.video_repo_id.split(',')
@@ -220,22 +240,24 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
                 cfg.dataset.video_repo_id,
                 transform=image_transforms,
             )
-        all_datasets.append(dataset)
+            for a_dataset in dataset._datasets:
+                all_datasets.append(a_dataset)
+        # all_datasets.append(dataset)
 
     num_frames = 0
     num_episodes = 0
     for ds in all_datasets:
         num_frames += ds.num_frames
         num_episodes += ds.num_episodes
-    dataset = ConcatDatasetWithIndex(all_datasets)
+    # dataset = ConcatDatasetWithIndex(all_datasets, accelerator)
     # dataset = ConcatDataset(all_datasets)
-    dataset.num_frames = num_frames
-    dataset.num_episodes = num_episodes
+    # dataset.num_frames = num_frames
+    # dataset.num_episodes = num_episodes
     
     val_sample_weights_dict = {}
     dataset_types = []
     sample_weights = []
-    for a_dataset in dataset.ds.datasets:
+    for a_dataset in all_datasets:
         sample_weights += [a_dataset.weight] * a_dataset.__len__()
         dataset_types += [a_dataset.ds_type] * a_dataset.__len__()
     sample_weights = np.array(sample_weights)
@@ -250,4 +272,4 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
         train_sample_weights[val_data_idx_same_t] = 0.0
     train_sample_weights = np.array(train_sample_weights)
 
-    return dataset, train_sample_weights, val_sample_weights_dict
+    return all_datasets, train_sample_weights, val_sample_weights_dict, stats

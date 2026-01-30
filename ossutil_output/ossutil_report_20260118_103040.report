@@ -1,0 +1,1 @@
+# /workspace/oss/ADC/oss-util/ossutil-v1.7.19-linux-amd64/ossutil cp -ru /publicdata-sh/huggingface.co/datasets/IPEC-COMMUNITY/ oss://xrobot-model/tangwl3@xiaopeng.com/IPEC-COMMUNITY -c /workspace/oss/ADC/oss-util/ossutil-v1.7.19-linux-amd64/oss_config
