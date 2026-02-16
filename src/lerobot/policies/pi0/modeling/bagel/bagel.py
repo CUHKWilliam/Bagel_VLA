@@ -59,8 +59,8 @@ class BagelConfig(PretrainedConfig):
         self.timestep_shift = timestep_shift
         ## TODO: from openpi zero, for action generation
         self.action_dim = action_dim
-        self.max_action_dim = 32
-        self.action_proj_width = 1024
+        self.max_action_dim = 50
+        self.action_proj_width = 3584
         self.mse_weight: float = 1.0
         self.ce_weight: float = 1.0
         self.ce_loss_reweighting: bool = False
@@ -132,7 +132,7 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
 
             cfg_cls = CONFIG_MAPPING[paligemma_config["model_type"]]
             self.paligemma_config = cfg_cls(**paligemma_config)
-
+        import ipdb;ipdb.set_trace()
         if gemma_expert_config is None:
             # Default config from Pi0
             self.gemma_expert_config = CONFIG_MAPPING["gemma"](
@@ -143,7 +143,7 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 head_dim=256,
                 hidden_act="gelu_pytorch_tanh",
                 hidden_activation="gelu_pytorch_tanh",
-                hidden_size=1024,
+                hidden_size=3584,
                 initializer_range=0.02,
                 intermediate_size=4096,
                 max_position_embeddings=8192,
@@ -197,7 +197,7 @@ class Bagel(PreTrainedModel):
         self.latent_pos_embed = PositionEmbedding(self.max_latent_size, self.hidden_size)
         # trainable list of parameters, each of which is in the shape (TOTAL_ROBOT_TYPES, self.hidden_size)
         self.robot_type_embedding_list = nn.ParameterList(
-            [nn.Parameter(torch.zeros(self.config.robot_type_prompt_len, self.hidden_size), requires_grad=True) for _ in range(self.config.max_num_robot_types)]
+            [nn.Parameter(torch.zeros(self.config.robot_type_prompt_len, self.hidden_size).cuda(), requires_grad=True) for _ in range(self.config.max_num_robot_types)]
         )
 
         if config.visual_und:
@@ -283,7 +283,6 @@ class Bagel(PreTrainedModel):
         for ids in packed_robot_type_ids:
             robot_type_embed = self.robot_type_embedding_list[ids]
             robot_type_embeds.append(robot_type_embed)
-        
         packed_robot_type_embeds = torch.cat(robot_type_embeds, dim=0)
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros(size=(sequence_length, self.hidden_size))
@@ -378,30 +377,29 @@ class Bagel(PreTrainedModel):
             curr += curr_kvlen
 
             embodiment_tokens = self.robot_type_embedding_list[robot_type_id]
-            
             packed_tokens.append(embodiment_tokens)
-            num_tokens = packed_tokens.shape[0]
+            num_tokens = embodiment_tokens.shape[0]
             token_seqlens.append(num_tokens)
-            packed_token_indexes.extend(range(_curr, _curr + num_img_tokens))
-            packed_indexes.extend(range(curr, curr + num_img_tokens))
-            curr += num_img_tokens
-            _curr += num_img_tokens
+            packed_token_indexes.extend(range(_curr, _curr + num_tokens))
+            packed_indexes.extend(range(curr, curr + num_tokens))
+            curr += num_tokens
+            _curr += num_tokens
 
             packed_position_ids.extend([curr_position_id] * num_tokens)
-            packed_seqlens.append(num_img_tokens)
+            packed_seqlens.append(num_tokens)
             newlens.append(curr_kvlen + num_tokens)
             new_rope.append(curr_position_id + 1)
-
         generation_input = {
             "token_seqlens": torch.tensor(token_seqlens, dtype=torch.int),
             "packed_tokens": torch.cat(packed_tokens, dim=0),
-            "packed_position_ids": torch.cat(packed_position_ids, dim=0),
+            "packed_position_ids": torch.tensor(packed_position_ids, dtype=torch.long),
             "packed_token_indexes": torch.tensor(packed_token_indexes, dtype=torch.long),
             "packed_seqlens": torch.tensor(packed_seqlens, dtype=torch.int),
             "packed_indexes": torch.tensor(packed_indexes, dtype=torch.long),
             "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long),
             "key_values_lens": torch.tensor(curr_kvlens, dtype=torch.int),
         }
+        return generation_input, newlens, new_rope
 
     def prepare_prompts(self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids):
         packed_text_ids = list()
@@ -483,16 +481,15 @@ class Bagel(PreTrainedModel):
         packed_key_value_indexes,
         key_values_lens,
     ):
-        import ipdb;ipdb.set_trace()
         extra_inputs = {}
         if self.use_moe:
             extra_inputs = {"mode": "und"}
 
         output = self.language_model.forward_inference(
-            packed_query_sequence=packed_text_embedding,
-            query_lens=text_token_lens,
-            packed_query_position_ids=packed_text_position_ids,
-            packed_query_indexes=packed_text_indexes,
+            packed_query_sequence=packed_tokens,
+            query_lens=packed_seqlens,
+            packed_query_position_ids=packed_position_ids,
+            packed_query_indexes=packed_indexes,
             past_key_values=past_key_values,
             packed_key_value_indexes=packed_key_value_indexes,
             key_values_lens=key_values_lens,
@@ -1156,6 +1153,7 @@ class Bagel(PreTrainedModel):
         }
 
         return generation_input 
+        
     def prepare_action(self, curr_kvlens, curr_rope, new_token_ids):
         packed_text_ids, packed_text_indexes = list(), list()
         packed_act_position_ids, packed_act_token_indexes = list(), list()
@@ -1220,6 +1218,7 @@ class Bagel(PreTrainedModel):
         step = 0
         generated_sequence = []
         curr_tokens = packed_start_tokens
+        packed_query_sequences = []
         while step < max_length:
             generated_sequence.append(curr_tokens)
             packed_text_embedding = self.language_model.model.embed_tokens(curr_tokens)
@@ -1253,6 +1252,7 @@ class Bagel(PreTrainedModel):
             )
             past_key_values = output.past_key_values
             packed_query_sequence = output.packed_query_sequence
+            packed_query_sequences.append(packed_query_sequence)
             pred_logits = self.language_model.lm_head(packed_query_sequence)
 
             if do_sample:
@@ -1273,9 +1273,9 @@ class Bagel(PreTrainedModel):
 
             if end_token_id is not None and curr_tokens[0] == end_token_id: # only support batch=1
                 break
-
+        packed_query_sequences = torch.stack(packed_query_sequences, dim=0)
         output_device = generated_sequence[0].device
-        return torch.stack([i.to(output_device) for i in generated_sequence], dim=0)
+        return torch.stack([i.to(output_device) for i in generated_sequence], dim=0), packed_query_sequences
 
     @torch.no_grad
     def generate_action(

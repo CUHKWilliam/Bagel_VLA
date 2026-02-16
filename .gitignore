@@ -174,3 +174,4 @@ cython_debug/
 *.safetensors
 *.json
 *.mp4
+debug/

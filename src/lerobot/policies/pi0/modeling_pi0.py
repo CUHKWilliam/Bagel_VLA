@@ -101,6 +101,14 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.datasets.lerobot_dataset import DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS
+from transformers import (
+    AutoConfig,
+    GemmaForCausalLM,
+    PaliGemmaForConditionalGeneration,
+    PretrainedConfig,
+    PreTrainedModel,
+)
+
 def autocast(data_batch, dtype1, dtype2):
     for key in data_batch.keys():
         value = data_batch[key]
@@ -125,12 +133,12 @@ class DataArguments:
     )
     max_num_tokens_per_sample: int = field(
         # default=26384,
-        default=5000,
+        default=7000,
         metadata={"help": "Maximum tokens allowed in one raw sample; longer samples are skipped."}
     )
     max_num_tokens: int = field(
         # default=66864,
-        default=5000,
+        default=7000,
         metadata={"help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."}
     )
     prefer_buffer_before: int = field(
@@ -531,7 +539,7 @@ class PI0Policy(PreTrainedPolicy):
             use_ref=self.config.use_ref,
         )
         print("visual_gen:", training_args.visual_gen, "visual_und:", training_args.visual_und, "action_gen:", training_args.action_gen)
-        fast_tokenizer_path = "physical-intelligence/fast"
+        fast_tokenizer_path = "/dataset_rc_mm/tangwl3@xiaopeng.com/fast_tokenizer/fast_tokenizer"
         self.fast_tokenizer = AutoProcessor.from_pretrained(fast_tokenizer_path, trust_remote_code=True, )
         self.pad_token_id = (
             self.model.tokenizer.pad_token_id
@@ -613,7 +621,6 @@ class PI0Policy(PreTrainedPolicy):
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            ## TODO:
             self._action_queue.extend(actions.transpose(0, 1))# [:10])
         else:
             predict_image = [None]
@@ -646,15 +653,16 @@ class PI0Policy(PreTrainedPolicy):
         """                       
         cleaned_tokens = tokens
         action_tokens = self._act_tokens_to_bagel_tokens(cleaned_tokens)
-        decoded_actions = torch.tensor(
-                self.decode_actions_with_fast(
-                    action_tokens.unsqueeze(0).tolist(),
-                    time_horizon=action_horizon,
-                    action_dim=self.config.max_action_dim,
-                    relaxed_decoding=True,
-                ),
-        ).cuda()
-        decoded_actions = self.unnormalize_actions(decoded_actions)[:, :, :action_dim]
+        # decoded_actions = torch.tensor(
+        #         self.decode_actions_with_fast(
+        #             action_tokens.unsqueeze(0).tolist(),
+        #             time_horizon=action_horizon,
+        #             action_dim=self.config.max_action_dim,
+        #             relaxed_decoding=True,
+        #         ),
+        # ).cuda()
+        decoded_actions = torch.from_numpy(self.fast_tokenizer.decode(action_tokens[None, ...], time_horizon=action_horizon, action_dim=self.config.max_action_dim)).float().cuda()
+        decoded_actions = self.unnormalize_actions(decoded_actions)
         return decoded_actions
 
     def decode_actions_with_fast(
@@ -672,7 +680,6 @@ class PI0Policy(PreTrainedPolicy):
         # Cache the time horizon and action dimension for the next call
         self.called_time_horizon = time_horizon
         self.called_action_dim = action_dim
-
 
         decoded_actions = []
         for token in tokens:
@@ -732,7 +739,7 @@ class PI0Policy(PreTrainedPolicy):
         """Do a full training forward pass to compute the loss"""
         data_batch = self.prepare_inputs(data_batch)
         loss_dict = {}
-        loss_dict, losses = self.model.forward(data_batch=data_batch, get_time=get_time)
+        loss_dict, losses = self.model.forward(data_batch=data_batch, normalize_actions=self.normalize_actions)
         return losses, loss_dict
 
     def _pi_aloha_decode_state(self, state):
@@ -801,146 +808,153 @@ class PI0FlowMatching(nn.Module):
         self.config = config
         self.use_ref = self.config.use_ref
 
-        if True:
-            if not os.path.exists(os.path.join(model_args.model_path, 'llm_config.json')):
-                from huggingface_hub import snapshot_download
-                save_dir =model_args.model_path
-                repo_id = "ByteDance-Seed/BAGEL-7B-MoT"
-                cache_dir = save_dir
-                snapshot_download(cache_dir=cache_dir,
-                  local_dir=save_dir,
-                  repo_id=repo_id,
-                  local_dir_use_symlinks=False,
-                  resume_download=True,
-                  allow_patterns=["*.json", "*.safetensors", "*.bin", "*.py", "*.md", "*.txt"],
-                )
-
-            llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
-            ## TODO:
-            # llm_config.num_hidden_layers = 10
-
-            llm_config.layer_module = model_args.layer_module
-            llm_config.qk_norm = model_args.llm_qk_norm
-            llm_config.tie_word_embeddings = model_args.tie_word_embeddings
-            llm_config.freeze_und = training_args.freeze_und
-            language_model = Qwen2ForCausalLM(llm_config, visual_gen=training_args.visual_gen)
-            if training_args.copy_init_moe:
-                language_model.init_moe()
-            if training_args.visual_und:  
-                vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
-                vit_config.num_hidden_layers = vit_config.num_hidden_layers + 1 + model_args.vit_select_layer
-                vit_config.rope = model_args.vit_rope
-                vit_model = SiglipVisionModel(vit_config)
-
-            vae_model, vae_config = load_ae(
-                local_path=os.path.join(model_args.model_path, "ae.safetensors") 
+        if not os.path.exists(os.path.join(model_args.model_path, 'llm_config.json')):
+            from huggingface_hub import snapshot_download
+            save_dir =model_args.model_path
+            repo_id = "ByteDance-Seed/BAGEL-7B-MoT"
+            cache_dir = save_dir
+            snapshot_download(cache_dir=cache_dir,
+                local_dir=save_dir,
+                repo_id=repo_id,
+                local_dir_use_symlinks=False,
+                resume_download=True,
+                allow_patterns=["*.json", "*.safetensors", "*.bin", "*.py", "*.md", "*.txt"],
             )
-            self.vae_config = vae_config
 
-            self.bagel_config = BagelConfig(
-                visual_gen=training_args.visual_gen,
-                visual_und=training_args.visual_und,
-                llm_config=llm_config, 
-                vit_config=vit_config if training_args.visual_und else None,
-                vae_config=vae_config,
-                latent_patch_size=model_args.latent_patch_size,
-                max_latent_size=model_args.max_latent_size,
-                vit_max_num_patch_per_side=model_args.vit_max_num_patch_per_side,
-                connector_act=model_args.connector_act,
-                interpolate_pos=model_args.interpolate_pos,
-                timestep_shift=training_args.timestep_shift,
-                action_dim=self.config.action_dim,
-            )
-            self.bagel_config.chunk_size = config.chunk_size
-            bagel_model = Bagel(
-                language_model, 
-                vit_model if training_args.visual_und else None, 
-                self.bagel_config,
-            )
-            self.bagel_model = bagel_model
-            if training_args.visual_und:
-                bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
-            
-            # TODO: loead model
-            model_state_dict_path = os.path.join(model_args.model_path, "ema.safetensors")
-            model_state_dict = load_file(model_state_dict_path, device="cpu")
-            msg = bagel_model.load_state_dict(model_state_dict, strict=False)
-            print(f"load Bagel: {msg}")
+        llm_config = Qwen2Config.from_json_file(os.path.join(model_args.model_path, "llm_config.json"))
+        ## TODO:
+        # llm_config.num_hidden_layers = 10
 
-            tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path)
-            tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
-            self.new_token_ids = new_token_ids
-            if num_new_tokens > 0:
-                bagel_model.language_model.resize_token_embeddings(len(tokenizer))
-                bagel_model.config.llm_config.vocab_size = len(tokenizer)
-                bagel_model.language_model.config.vocab_size = len(tokenizer)
-            self.tokenizer = tokenizer
-     
-            # TODO: fix bagel
-            for name, param in bagel_model.named_parameters():
-                param.requires_grad = True
+        llm_config.layer_module = model_args.layer_module
+        llm_config.qk_norm = model_args.llm_qk_norm
+        llm_config.tie_word_embeddings = model_args.tie_word_embeddings
+        llm_config.freeze_und = training_args.freeze_und
+        language_model = Qwen2ForCausalLM(llm_config, visual_gen=training_args.visual_gen)
+        if training_args.copy_init_moe:
+            language_model.init_moe()
+        if training_args.visual_und:  
+            vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
+            vit_config.num_hidden_layers = vit_config.num_hidden_layers + 1 + model_args.vit_select_layer
+            vit_config.rope = model_args.vit_rope
+            vit_model = SiglipVisionModel(vit_config)
 
-            
-            def get_model_param_count(model, trainable_only=False):
-                def numel(p):
-                    try:
-                        return p.ds_numel
-                    except:
-                        return p.numel()
-                return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
-            
-            unfixed_num_params = 0
-            for layer_idx in range(len(bagel_model.language_model.model.layers)):
-                num_params = get_model_param_count(bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1])
-                if unfixed_num_params < config.model_size * 1e9:
-                    for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
-                        p.requires_grad = True
-                    unfixed_num_params += num_params
-                else:
-                    for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
-                        p.requires_grad = False
-            if training_args.freeze_vae and training_args.visual_gen:
-                for param in vae_model.parameters():
-                    param.requires_grad = False
-            
+        vae_model, vae_config = load_ae(
+            local_path=os.path.join(model_args.model_path, "ae.safetensors") 
+        )
+        self.vae_config = vae_config
 
-            ## TODO: overwrite the above freeze, train only the generation exp
-            # for name, param in bagel_model.named_parameters():
-            #     if "moe" not in name:
-            #         param.requires_grad = False
+        self.bagel_config = BagelConfig(
+            visual_gen=training_args.visual_gen,
+            visual_und=training_args.visual_und,
+            llm_config=llm_config, 
+            vit_config=vit_config if training_args.visual_und else None,
+            vae_config=vae_config,
+            latent_patch_size=model_args.latent_patch_size,
+            max_latent_size=model_args.max_latent_size,
+            vit_max_num_patch_per_side=model_args.vit_max_num_patch_per_side,
+            connector_act=model_args.connector_act,
+            interpolate_pos=model_args.interpolate_pos,
+            timestep_shift=training_args.timestep_shift,
+            action_dim=self.config.action_dim,
+        )
+        self.bagel_config.chunk_size = config.chunk_size
+        bagel_model = Bagel(
+            language_model, 
+            vit_model if training_args.visual_und else None, 
+            self.bagel_config,
+        )
+        self.bagel_model = bagel_model
+        if training_args.visual_und:
+            bagel_model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
+        
+        # TODO: loead model
+        model_state_dict_path = os.path.join(model_args.model_path, "ema.safetensors")
+        model_state_dict = load_file(model_state_dict_path, device="cpu")
+        msg = bagel_model.load_state_dict(model_state_dict, strict=False)
+        print(f"load Bagel: {msg}")
 
-            #     else:
-            #         param.requires_grad =True
-
-            self.vae_model = vae_model
-             
-            # for name, param in bagel_model.named_parameters():
-            #     if 'moe' in name:
-            #         param.requires_grad = True
-            #     else:
-            #         param.requires_grad = True
-                    
-            # if training_args.freeze_llm:
-            #     bagel_model.language_model.eval()
-            #     for param in bagel_model.language_model.parameters():
-            #         param.requires_grad = False
+        tokenizer = Qwen2Tokenizer.from_pretrained(model_args.model_path)
+        tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
+        self.new_token_ids = new_token_ids
+        if num_new_tokens > 0:
+            bagel_model.language_model.resize_token_embeddings(len(tokenizer))
+            bagel_model.config.llm_config.vocab_size = len(tokenizer)
+            bagel_model.language_model.config.vocab_size = len(tokenizer)
+        self.tokenizer = tokenizer
     
-            if True:
-                ## TODO: fix vit backbone
-                # if training_args.freeze_vit and training_args.visual_und:
-                bagel_model.vit_model.eval()
-                for param in bagel_model.vit_model.parameters():
-                    param.requires_grad = False
-            # logging.info(f"{unfixed_num_params=} ({format_big_number(unfixed_num_params)})")
-            for n, p in bagel_model.named_parameters():
-                if 'time_embedder' in n or 'vae2llm' in n or'latent_pos_embed' in n or 'connector' in n or 'vit_pos_embed' in n or "llm2vae" in n or 'embed_tokens' in n:
+        # TODO: fix bagel
+        for name, param in bagel_model.named_parameters():
+            param.requires_grad = True
+
+        
+        def get_model_param_count(model, trainable_only=False):
+            def numel(p):
+                try:
+                    return p.ds_numel
+                except:
+                    return p.numel()
+            return sum(numel(p) for p in model.parameters() if not trainable_only or p.requires_grad)
+        
+        unfixed_num_params = 0
+        for layer_idx in range(len(bagel_model.language_model.model.layers)):
+            num_params = get_model_param_count(bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1])
+            if unfixed_num_params < config.model_size * 1e9:
+                for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
+                    p.requires_grad = True
+                unfixed_num_params += num_params
+            else:
+                for n, p in bagel_model.language_model.model.layers[len(bagel_model.language_model.model.layers) - layer_idx - 1].named_parameters():
                     p.requires_grad = False
-        self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        # self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
-        # self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
+        if training_args.freeze_vae and training_args.visual_gen:
+            for param in vae_model.parameters():
+                param.requires_grad = False
+        
+
+        ## TODO: overwrite the above freeze, train only the generation exp
+        # for name, param in bagel_model.named_parameters():
+        #     if "moe" not in name:
+        #         param.requires_grad = False
+
+        #     else:
+        #         param.requires_grad =True
+
+        self.vae_model = vae_model
+            
+        # for name, param in bagel_model.named_parameters():
+        #     if 'moe' in name:
+        #         param.requires_grad = True
+        #     else:
+        #         param.requires_grad = True
+                
+        # if training_args.freeze_llm:
+        #     bagel_model.language_model.eval()
+        #     for param in bagel_model.language_model.parameters():
+        #         param.requires_grad = False
+
+        ## TODO: fix vit backbone
+        # if training_args.freeze_vit and training_args.visual_und:
+        bagel_model.vit_model.eval()
+        for param in bagel_model.vit_model.parameters():
+            param.requires_grad = False
+
+        # logging.info(f"{unfixed_num_params=} ({format_big_number(unfixed_num_params)})")
+        for n, p in bagel_model.named_parameters():
+            if 'time_embedder' in n or 'vae2llm' in n or'latent_pos_embed' in n or 'connector' in n or 'vit_pos_embed' in n or "llm2vae" in n or 'embed_tokens' in n:
+                p.requires_grad = False
+        paligemma_with_export_config = PaliGemmaWithExpertConfig(
+            freeze_vision_encoder=self.config.freeze_vision_encoder,
+            train_expert_only=True,
+            attention_implementation=self.config.attention_implementation,
+            remove_pi0=True,
+        )
+        self.gemma_expert = GemmaForCausalLM(config=paligemma_with_export_config.gemma_expert_config)
+        self.gemma_expert.model.embed_tokens = None
+        self.state_proj = nn.Linear(self.config.max_state_dim, self.gemma_expert.lm_head.in_features)
+        self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
+        self.action_time_mlp_out = nn.Linear(self.config.proj_width,self.gemma_expert.lm_head.in_features)
         # self.set_requires_grad()
-        # self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        # self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
+        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
+        self.action_out_proj = nn.Linear(self.gemma_expert.lm_head.in_features, self.config.max_action_dim)
 
 
     def set_requires_grad(self):
@@ -971,7 +985,7 @@ class PI0FlowMatching(nn.Module):
         # Embed state
         state_emb = self.state_proj(state)
         # state_emb = state_emb.to(dtype=torch.bfloat16)
-        embs.append(state_emb[:, None, :])
+        embs.append(state_emb)
         bsize = state_emb.shape[0]
         dtype = state_emb.dtype
         device = state_emb.device
@@ -1002,57 +1016,69 @@ class PI0FlowMatching(nn.Module):
         embs.append(action_time_emb)
 
         bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=device)
-        pad_masks.append(action_time_mask)
-
-        # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.n_action_steps - 1))
-
         embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return embs, pad_masks, att_masks
+        return embs
 
     def forward(
-        self, state=None, noise=None, time=None, data_batch=None, get_time=False, actions=None,
+        self, state=None, noise=None, time=None, data_batch=None,normalize_actions=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
 
-        if actions is not None:
-            if noise is None:
-                noise = self.sample_noise(actions.shape, actions.device)
-
-            if time is None:
-                time = self.sample_time(actions.shape[0], actions.device)
-
+        self.dtype = self.state_proj.weight.dtype
+        if "actions_mse" in data_batch.keys():
+            actions_mse = data_batch['actions_mse']
+            actions_mse = F.pad(
+                actions_mse, (0, max(0, self.config.max_action_dim - actions_mse.shape[2])), value=0
+            )[:, :, : self.config.max_action_dim]
+            actions_mse = normalize_actions(actions_mse)
+            state = data_batch['state']
+            state = F.pad(
+                state, (0, max(0, self.config.max_action_dim - state.shape[2])), value=0
+            )[:, :, : self.config.max_action_dim]
+            noise = self.sample_noise(actions_mse.shape, actions_mse.device)
+            time = self.sample_time(actions_mse.shape[0], actions_mse.device)
             time_expanded = time[:, None, None]
-            x_t = time_expanded * noise + (1 - time_expanded) * actions
-            u_t = noise - actions
+            x_t = time_expanded * noise + (1 - time_expanded) * actions_mse
+            u_t = noise - actions_mse
             x_t = x_t.to(self.dtype)
             state = state.to(self.dtype)
             time = time.to(self.dtype)
-            suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
+            suffix_embs = self.embed_suffix(state, x_t, time)
         
         if self.bagel_model.config.visual_gen:
             visual_gen_complete = np.random.rand() < 0.5
         else:
             visual_gen_complete = 1
-        if get_time:
-            torch.cuda.synchronize()
-            t = Time.time()
         ret = self.bagel_model(**data_batch, visual_gen_complete=visual_gen_complete)
-        if get_time:
-            dt = Time.time() - t
+        sample_lens = data_batch["sample_lens"]
+        last_hidden_state = ret['last_hidden_state']
+        start = 0
+        suffix_out = []
+        for batch_id in range(len(sample_lens) - 1):
+            sample_len = sample_lens[batch_id]
+            inputs_embeds = last_hidden_state[start: start + sample_len][None, ...]
+            actions_pad = torch.zeros((inputs_embeds.size(0), self.config.max_action_dim, inputs_embeds.size(-1))).to(self.dtype).cuda()
+            inputs_embeds = torch.cat([inputs_embeds, suffix_embs[batch_id: batch_id+1, :, :], actions_pad], dim=1)
+            a_suffix_out = self.gemma_expert(fill_kv_cache=False, use_cache=True,inputs_embeds=inputs_embeds).hidden_states[:, -self.config.n_action_steps:, :]
+            start += sample_len
+            suffix_out.append(a_suffix_out)
+
 
         if self.bagel_model.config.action_gen:
-            if actions is not None:
+            suffix_out = torch.cat(suffix_out, dim=0)
+            if "actions_mse" in data_batch.keys():
                 v_t = self.action_out_proj(suffix_out)
                 action_losses = F.mse_loss(u_t.float(), v_t.float(), reduction="none")
         ## TODO:
         loss_dict = {} 
         loss = torch.tensor(0).float().cuda()
+
+        if self.bagel_model.config.action_gen and "actions_mse" in data_batch.keys():
+            loss_dict['action_mse'] = action_losses.mean()
+            loss += action_losses.mean()
+        else:
+            loss_dict["action_mse"] = torch.tensor(0.).float().cuda()
+
         if ret['ce'] is not None and "ce_loss_indexes" in data_batch.keys():
             ce = ret['ce']  ## TODO:
             # if self.bagel_model.config.vi sual_gen and "mse_loss_indexes" in data_batch.keys() and not visual_gen_complete:
@@ -1079,8 +1105,6 @@ class PI0FlowMatching(nn.Module):
         else:
             loss_dict["mse"] = torch.tensor(0).cuda().float()
             total_mse_tokens = torch.tensor(0).cuda()
-        if get_time:
-            loss_dict['time'] = dt
         return loss_dict, loss
     
     def sample_images(self, batch, vit_transform, vae_transform, tokenizer):
@@ -1287,17 +1311,17 @@ class PI0FlowMatching(nn.Module):
                 generation_input[k] = v.to(device)
         past_key_values = self.bagel_model.forward_cache_update_text(past_key_values, **generation_input)
         ## add robotype
-        robotype = "new_embodiment"
-        robotype_id = DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS[rototype]
+        robotype = "gr00t"
+        robotype_id = DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS[robotype]
         generation_input, newlens, new_rope = self.bagel_model.prepare_robotype(
             curr_kvlens=newlens,
             curr_rope=new_rope, 
-            robotype_id=[robotype_id],
+            robot_type_ids=[robotype_id],
         )
         for k, v in generation_input.items():
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
-        past_key_values = self.bagel_model.forward_cache_update_rototype(past_key_values, **generation_input)
+        past_key_values = self.bagel_model.forward_cache_update_robotype(past_key_values, **generation_input)
 
         # TODO: decode for text generation
         # generation_input = self.prepare_start_tokens(newlens, new_rope, new_token_ids)
@@ -1368,7 +1392,6 @@ class PI0FlowMatching(nn.Module):
                 image_list.append(tmpimage)
             predict_images = image_list
             predict_images[0].save('./debug_predict_image.png')
-            # import ipdb;ipdb.set_trace()
             generation_input, newlens, new_rope = self.bagel_model.prepare_vit_images(
                 curr_kvlens=newlens,
                 curr_rope=new_rope,
@@ -1388,15 +1411,56 @@ class PI0FlowMatching(nn.Module):
             if torch.is_tensor(v):
                 generation_input[k] = v.to(device)
         do_sample = False
-        temperature = 0.2
         output = self.bagel_model.generate_text(
             past_key_values=past_key_values,
             max_length=400,
             do_sample=do_sample,
-            temperature=temperature,
+            temperature=0,
             end_token_id=new_token_ids['eoa_token_id'],
             **generation_input,
         )
         action_tokens = output[1:, 0]
+        state = batch['observation.state']
+        state = state[None, ...]
+        state = F.pad(
+            state, (0, max(0, self.config.max_action_dim - state.shape[-1])), value=0
+        )[:, : self.config.max_action_dim]
+        state = state.to(self.dtype)
+        noise = self.sample_noise(action_tokens.shape, device)
+        dt = -1.0 / self.config.num_steps
+        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+        x_t = noise
+        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        import ipdb;ipdb.set_trace()
+        while time >= -dt / 2:
+            expanded_time = time.expand(1)
+            v_t = self.denoise_action_step(
+                inputs_embeds,
+                state,
+                x_t,
+                time,
+            )
+            # Euler step
+            x_t += dt * v_t
+            time += dt
+        predict_actions = x_t
+        predict_actions = self.unnormalize_actions(predict_actions)
         return action_tokens, predict_images
         
+    def denoise_action_step(
+        self,
+        inputs_embeds,
+        state,
+        x_t,
+        time,
+    ):
+        """Apply one denoising step of the noise `x_t` at a given timestep."""
+        suffix_embs = self.embed_suffix(state, x_t, time)
+
+        inputs_embeds = torch.cat([inputs_embeds, suffix_embs[batch_id: batch_id+1, :, :], actions_pad], dim=1)
+        a_suffix_out = self.gemma_expert(fill_kv_cache=False, use_cache=True,inputs_embeds=inputs_embeds).hidden_states[:, -self.config.n_action_steps:, :]
+        suffix_out = outputs_embeds[1]
+        suffix_out = suffix_out[:, -self.config.n_action_steps :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        v_t = self.action_out_proj(suffix_out)
+        return v_t

@@ -398,7 +398,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
         ## For action generation 
         sample_keys = list(sample.keys())
         sorted_sample_keys =self.sort_keys(sample_keys)
-    
+
         ## TODO: shuffle keys
         if self.use_ref:
             np.random.shuffle(sorted_sample_keys)
@@ -424,7 +424,7 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                                 need_loss=False,
                             )
         for key in sorted_sample_keys:
-            if "images." in key and "observation" in key:
+            if "images." in key and "observation" in key and "is_pad" not in key:
                 data = self._add_image(
                     data,
                     pil_img2rgb(Image.fromarray((sample[key][0].detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))),
@@ -509,6 +509,8 @@ class UnifiedEditIterableDataset(InterleavedBaseIterableDataset):
                 )
         if self.use_ref:
             data['ref_num'] = sample['ref_num']
+        data['observation.state'] = sample['observation.state']
+        data['actions_mse'] = sample['actions_mse']
         datas.append(data)
         return datas
     
@@ -691,34 +693,38 @@ class PackedDataset:
         if len(sequence_status['packed_robotype_ids']) >0:
             data['packed_robotype_ids'] = torch.stack(sequence_status['packed_robotype_ids'], dim=0)
             data['packed_robotype_indexes'] = torch.tensor(sequence_status['packed_robotype_indexes'])
+        
+        data['actions_mse'] = torch.cat(sequence_status['actions_mse'], dim=0)
+        data['observation.state'] = torch.cat(sequence_status['observation.state'], dim=0)
         return data
 
-    def __call__(self, batch_dataloaders, tokenize_action, accelerator):
+    def __call__(self, batch_dataloaders, tokenize_action, accelerator=None):
         dl_iters = [iter(batch_dataloader) for batch_dataloader in batch_dataloaders]
         sequence_status = self.set_sequence_status()
         buffer = []
         dataloader_idx = 0 
-
+        batch_cnt = 0
         while True:
             # for batch in batch_dataloader:
             while True:
-                accelerator.wait_for_everyone()
-                dataloader_idx_tensor = torch.tensor([dataloader_idx], device=accelerator.device)
-                dataloader_idx = accelerator.gather(dataloader_idx_tensor)[0].item()
+                # dataloader_idx_tensor = torch.tensor([dataloader_idx], device=accelerator.device)
+                # dataloader_idx = accelerator.gather(dataloader_idx_tensor)[0].item()
                 dl_iter = dl_iters[dataloader_idx % len(dl_iters)]
-                print("selected iters:{}".format(dataloader_idx % len(dl_iters)))
 
-                failed = torch.tensor([0], device=accelerator.device)
+                # failed = torch.tensor([0]).float().cuda()
                 try:
                     batch = next(dl_iter)
                 except Exception as e:
                     print("error for dataset {}: {}".format(dataloader_idx, e))
-                    failed = torch.tensor([1], device=accelerator.device) 
-                all_failed = accelerator.gather(failed)
-                if all_failed.sum() > 0:
                     continue
+                    # failed = torch.tensor([1]).float().cuda() 
+                # all_failed = accelerator.gather(failed)
+                # if all_failed.sum() > 0:
+                #     dataloader_idx += 1
+                #     continue
                 if "action" in batch.keys():
                     actions = batch["action"]
+                    batch['actions_mse'] = actions.clone()
                     act_ids = tokenize_action(actions)
                     batch['action'] = act_ids
                 if "ref_action" in batch.keys() and self.use_ref:
@@ -739,14 +745,16 @@ class PackedDataset:
                     print(f"skip a sample with length {num_tokens}")
                     continue
             # if sum(sequence_status['sample_lens']) > 20:
-            if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
+            # if sum(sequence_status['sample_lens']) + num_tokens > self.max_num_tokens:
+            if batch_cnt > 3:
                 print(f"Yielding data with length {sum(sequence_status['sample_lens'])}")
-                print(sequence_status['sample_lens'])
                 data = self.to_tensor(sequence_status)
                 yield data
                 sequence_status = self.set_sequence_status()
                 dataloader_idx += 1
+                batch_cnt  = 0
             sequence_status = self.pack_sequence(sample, sequence_status)
+            batch_cnt += 1
             continue
         return sequence_status
 
@@ -754,7 +762,6 @@ class PackedDataset:
         image_tensor_list = sample['image_tensor_list']
         text_ids_list = sample['text_ids_list']
         sequence_plan = sample['sequence_plan']
-
         split_lens, attn_modes = list(), list()
         curr = sequence_status['curr']
         curr_rope_id = 0
@@ -957,6 +964,11 @@ class PackedDataset:
             sequence_status['attn_modes'].extend(attn_modes)
         if self.use_ref:
             sequence_status['ref_num'].append(sample['ref_num'])
+        if "actions_mse" not in sequence_status.keys():
+            sequence_status['actions_mse'] = []    
+            sequence_status['observation.state'] = []
+        sequence_status['actions_mse'].append(sample['actions_mse'])
+        sequence_status['observation.state'].append(sample['observation.state'])
         return sequence_status
 
 
@@ -1007,6 +1019,8 @@ class SimpleCustomBatch:
         if "packed_robotype_ids" in data.keys():
             self.packed_robotype_ids = data['packed_robotype_ids']
             self.packed_robotype_indexes = data['packed_robotype_indexes']
+        self.actions_mse = data['actions_mse']
+        self.state = data['observation.state']
 
     def pin_memory(self):
         self.packed_text_ids = self.packed_text_ids.pin_memory()
@@ -1045,6 +1059,8 @@ class SimpleCustomBatch:
         if hasattr(self, "packed_robotype_ids"):
             self.packed_robotype_ids = self.packed_robotype_ids.pin_memory()
             self.packed_robotype_indexes = self.packed_robotype_indexes.pin_memory()
+        self.state = self.state.pin_memory()
+        self.actions_mse = self.actios_mse
         return self
 
     def cuda(self, device):
@@ -1084,7 +1100,8 @@ class SimpleCustomBatch:
         if hasattr(self, "packed_robotype_indexes"):
             self.packed_robotype_indexes = self.packed_robotype_indexes.to(device)
             self.packed_robotype_ids = self.packed_robotype_ids.to(device)
-        
+        self.actions_mse = self.actions_mse.to(device)
+        self.state = self.state.to(device)
         return self
 
     def to_dict(self):
@@ -1130,6 +1147,8 @@ class SimpleCustomBatch:
         if hasattr(self, "packed_robotype_ids"):
             data['packed_robotype_ids'] = self.packed_robotype_ids
             data['packed_robotype_indexes'] = self.packed_robotype_indexes
+        data['actions_mse'] = self.actions_mse
+        data['state'] = self.state
         return data
 
 

@@ -89,7 +89,7 @@ ROBOT_TYPE_TO_PROMPT_MAPS = {
         0: "action format:x,y,z,roll,pitch,yaw,gripper",
         1: "action format:motor_0,motor_1,motor_2,motor_3,motor_4,motor_5,motor_6,gripper",
         2: "action format:left_x,left_y,left_z,left_quaternion_x,left_quaternion_y,left_quaternion_z,left_quaternion_w,left_gripper,right_x,right_y,right_z,right_quaternion_x,right_quaternion_y,right_quaternion_z,right_quaternion_w,right_gripper",
-        3: "action format:left_motor_0,left_motor_1,left_motor_2,left_motor_3,left_motor_4,left_motor_5,left_motor_6,left_gripper,right_motor_0,right_motor_1,right_motor_2,right_motor_3,right_motor_4,right_motor_5,right_motor_6,right_gripper"
+        3: "action format:left_motor_0,left_motor_1,left_motor_2,left_motor_3,left_motor_4,left_motor_5,left_motor_6,left_gripper,right_motor_0,right_motor_1,right_motor_2,right_motor_3,right_motor_4,right_motor_5,right_motor_6,right_gripper",
 }
 
 ## TODO: write it here for now
@@ -129,6 +129,7 @@ DATASET_KEYWORD_TO_ROBOT_TYPE_INDICES_MAPS = {
     "egodex": 4,     
     "gr00t": 5,
     "new_embodiment": 0,
+    "libero": 0,
 }
 
 class LeRobotDatasetMetadata:
@@ -400,6 +401,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         use_ref=False,
+        rank= 0,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -516,6 +518,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
         self.use_ref = use_ref
+        self.rank = rank
 
         # Unused attributes
         self.image_writer = None
@@ -556,17 +559,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if len(stats['action']['min']) > 50:
                 stats['action']['min'] = stats['action']['min'][[36,37,38,39,40,41,42,43,44]]
                 stats['action']['max'] = stats['action']['max'][[324,325,326,327,328,329,330,331,332]]
-            elif len(stats['action']['min']) > 40:
+            elif len(stats['action']['min']) > 30:
                 # for gr00t
-                stats['action']['min'] = stats['action']['min'][[7,8,9,10,11,12,29,30,31,32,33,34]]
-                stats['action']['max'] = stats['action']['max'][[7,8,9,10,11,12,29,30,31,32,33,34]]
-        padded_min = np.zeros((32,))
+                stats['action']['min'] = stats['action']['min'][[0,1,2,3,4,5,6,7,8,9,10,11,12,22,23,24,25,26,27,28,29,30,31,32,33,34,19,20,21,41,42,43]]
+                stats['action']['max'] = stats['action']['max'][[0,1,2,3,4,5,6,7,8,9,10,11,12,22,23,24,25,26,27,28,29,30,31,32,33,34,19,20,21,41,42,43]]
+        padded_min = np.zeros((50,))
         padded_min[:len(stats['action']['min'])] = stats['action']['min']
         stats['action']['min'] = padded_min
-        padded_max = np.zeros((32,))
+        padded_max = np.zeros((50,))
         padded_max[:len(stats['action']['max'])] = stats['action']['max']
         stats['action']['max'] = padded_max
-
         self.stats = stats
         # Load actual data
         try:
@@ -804,13 +806,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __len__(self):
         return 100 * (self.num_frames)
 
-    def __getitem__(self, idx) -> dict:
+    def __getitem__(self, idx, random=True) -> dict:
+        if random:
+            np.random.seed(idx + self.rank)
+            idx = np.random.randint(low=0, high=self.__len__() )
         idx = idx % self.num_frames
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
         query_indices = None
-
         if self.delta_indices is not None:
             query_indices, padding, ref_num = self._get_query_indices(idx, ep_idx, with_ref=False)
             item['ref_num'] = ref_num
@@ -818,7 +822,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = {**item, **padding}
             for key, val in query_result.items():
                 item[key] = val
-        
         if 'action' not in query_result.keys():
             ## for Galaxea
             if "action.left_gripper" in query_result.keys() and "action.left_arm" in query_result.keys():
@@ -836,16 +839,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item['action'] = action
         else:
             # for egodex
-            if len(item['action']) > 50:
-                item['action'] = item['action'][[36,37,38,39,40,41,42,43,44]]
+            if item['action'].shape[1] > 50:
+                item['action'] = item['action'][:, [36,37,38,39,40,41,42,43,44]]
                 query_result['action'] = item['action']
-            elif len(item['action']) > 40:
+            elif item['action'].shape[1] > 30:
                 # for gr00t
-                item['action'] = item['action'][[7,8,9,10,11,12,29,30,31,32,33,34]]
+                item['action'] = item['action'][:, [0,1,2,3,4,5,6,7,8,9,10,11,12,22,23,24,25,26,27,28,29,30,31,32,33,34,19,20,21,41,42,43]]
                 query_result['action'] = item['action']
-        
+                item['observation.state'] = item['observation.state'][:, [0,1,2,3,4,5,6,7,8,9,10,11,12,22,23,24,25,26,27,28,29,30,31,32,33,34,19,20,21,41,42,43]]
+                query_result['observation.state'] = item['observation.state']
         item['ref_action'] = item['action'][:ref_num]
         item['action'] = item['action'][ref_num:]
+        item['observation.state'] = item['observation.state'][ref_num:]
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             video_keys = self.meta.video_keys
@@ -1289,7 +1294,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         use_ref=True,
-        accelerator=None,
+        rank=0,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1308,7 +1313,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         max_workers = 8 ## TODO: set wroker for parallel process
 
         self._datasets = self._load_datasets_threaded(max_workers)
-        self.accelerator = accelerator
+        self.rank = rank
 
         # self._datasets = []
         # for repo_id in repo_ids:
@@ -1387,15 +1392,15 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 if len(stats['action']['min']) > 50:
                     stats['action']['min'] = stats['action']['min'][[36,37,38,39,40,41,42,43,44]]
                     stats['action']['max'] = stats['action']['max'][[324,325,326,327,328,329,330,331,332]]
-                elif len(stats['action']['min']) > 40:
+                elif len(stats['action']['min']) > 30:
                     # for gr00t
-                    stats['action']['min'] = stats['action']['min'][[7,8,9,10,11,12,29,30,31,32,33,34]]
-                    stats['action']['max'] = stats['action']['max'][[7,8,9,10,11,12,29,30,31,32,33,34]]
+                    stats['action']['min'] = stats['action']['min'][[0,1,2,3,4,5,6,7,8,9,10,11,12,22,23,24,25,26,27,28,29,30,31,32,33,34,19,20,21,41,42,43]]
+                    stats['action']['max'] = stats['action']['max'][[0,1,2,3,4,5,6,7,8,9,10,11,12,22,23,24,25,26,27,28,29,30,31,32,33,34,19,20,21,41,42,43]]
 
-            padded_min = np.zeros((32,))
+            padded_min = np.zeros((50,))
             padded_min[:len(stats['action']['min'])] = stats['action']['min']
             stats['action']['min'] = padded_min
-            padded_max = np.zeros((32,))
+            padded_max = np.zeros((50,))
             padded_max[:len(stats['action']['max'])] = stats['action']['max']
             stats['action']['max'] = padded_max
             if 'action' not in aggregated_stats.keys():
@@ -1587,11 +1592,11 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        # np.random.seed(idx)
-        dataset = self._datasets[np.random.randint(0, len(self._datasets))] ## TODO:
-        # dataset = self._datasets[np.random.choice(np.arange(len(self._datasets)))]
-        # np.random.seed(self.accelerator.process_index)
-        item = dataset[np.random.randint(0, len(dataset)) + self.accelerator.process_index]
+        
+        np.random.seed(idx + self.rank)
+        selected_idx = np.random.choice(np.arange(len(self._datasets)))
+        dataset = self._datasets[selected_idx]
+        item = dataset[np.random.randint(0, len(dataset))]
         item["dataset_index"] = torch.tensor(0) ## TODO: no use
         for data_key in self.disabled_features:
             if data_key in item:

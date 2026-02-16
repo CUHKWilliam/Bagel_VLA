@@ -1,3 +1,6 @@
+source /dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3/bin/activate /dataset_rc_mm/tangwl3@xiaopeng.com/anaconda3
+conda activate bagel_vla
+export WANDB_API_KEY="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"
 # 可选 NCCL 环境（按你网络修改）=1
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 #export NCCL_IB_DISABLE=1
@@ -15,11 +18,12 @@ export NCCL_DEBUG=INFO # DEBUG打印日志的等级
 
 MODEL_SIZE=16 ## no use, full param
 TOKEN_NUM=1000000000000 # no use, full tokens
-OUTPUT_DIR="./outputs/train/train_all_formal"
-JOB_NAME="train_all_formal"
+OUTPUT_DIR="./outputs/train/formal_train_all"
+JOB_NAME="formal_train_all"
 WANDB_PROJECT="debug"
-NNODES=2
-GPUS_PER_NODE=1
+NNODES=3
+MASTER_PORT=23089
+GPUS_PER_NODE=8
 
 LOG_DIR="./logs/${JOB_NAME}"
 mkdir -p "${LOG_DIR}"
@@ -35,20 +39,19 @@ echo "=========================================="
 echo ""
 
 # Log environment info
-echo "Environment Information:" | tee -a "${LOG_FILE}"
-echo "NODE_RANK=${NODE_RANK}" | tee -a "${LOG_FILE}"
-echo "MASTER_ADDR=${MASTER_ADDR}" | tee -a "${LOG_FILE}"
-echo "MASTER_PORT=${MASTER_PORT}" | tee -a "${LOG_FILE}"
-echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" | tee -a "${LOG_FILE}"
-echo "NCCL_DEBUG=${NCCL_DEBUG}" | tee -a "${LOG_FILE}"
-echo "NCCL_IB_DISABLE=${NCCL_IB_DISABLE}" | tee -a "${LOG_FILE}"
-echo "" | tee -a "${LOG_FILE}"
+echo "Environment Information:"
+echo "NODE_RANK=${NODE_RANK}"
+echo "MASTER_ADDR=${MASTER_ADDR}"
+echo "MASTER_PORT=${MASTER_PORT}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+echo "NCCL_DEBUG=${NCCL_DEBUG}"
+echo "NCCL_IB_DISABLE=${NCCL_IB_DISABLE}"
+echo ""
 
 # Start training with torchrun
-echo "Launching torchrun..." | tee -a "${LOG_FILE}"
-echo "Command: torchrun --nnodes=${NNODES} --nproc_per_node=${GPUS_PER_NODE} --node_rank=${NODE_RANK} --master_addr=${MASTER_ADDR} --master_port=${MASTER_PORT} src/lerobot/scripts/train_dist.py ..." | tee -a "${LOG_FILE}"
-echo "" | tee -a "${LOG_FILE}"
-
+echo "Launching torchrun..."
+echo "Command: torchrun --nnodes=${NNODES} --nproc_per_node=${GPUS_PER_NODE} --node_rank=${NODE_RANK} --master_addr=${MASTER_ADDR} --master_port=${MASTER_PORT} src/lerobot/scripts/train_dist_torchrun.py ..."
+echo ""
 
 # 启动
 torchrun \
@@ -57,8 +60,8 @@ torchrun \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  src/lerobot/scripts/train_dist.py \
-    --dataset.repo_id="/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part5/wrap" \
+  src/lerobot/scripts/train_dist_torchrun.py \
+    --dataset.repo_id="/dataset_rc_mm/share/datasets/modelscope.cn/Galaxea/Galaxea-Open-World-Dataset/lerobot_decompressed/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part1/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part3/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part4/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part5/*,/dataset_rc_mm/share/datasets/modelscope.cn/agibot_world/agibot_world_beta_gripper_top_head_lerobot_gr00t/agibotworld/*,/dataset_rc_mm/share/datasets/huggingface.co/nvidia/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/*" \
     --policy.model_size=${MODEL_SIZE} \
     --dataset.token_num=${TOKEN_NUM} \
     --output_dir="${OUTPUT_DIR}" \
@@ -71,17 +74,17 @@ torchrun \
     --policy.use_ref false \
     --policy.type="pi0" \
     --resume true \
-    --config_path="./outputs/train/formal_train_all/checkpoints/last/pretrained_model/train_config.json" \
-    2>&1 | tee -a "${LOG_FILE}"
+    --config_path="./outputs/train/formal_train_all/checkpoints/last/pretrained_model/train_config.json"
 
 # Capture exit code
-EXIT_CODE=${PIPESTATUS[0]}
+EXIT_CODE=$?
 
-echo "" | tee -a "${LOG_FILE}"
-echo "==========================================" | tee -a "${LOG_FILE}"
-echo "Training completed on Node ${NODE_RANK}" | tee -a "${LOG_FILE}"
-echo "Exit code: ${EXIT_CODE}" | tee -a "${LOG_FILE}"
-echo "Log saved to: ${LOG_FILE}" | tee -a "${LOG_FILE}"
-echo "==========================================" | tee -a "${LOG_FILE}"
+echo ""
+echo "=========================================="
+echo "Training completed on Node ${NODE_RANK}"
+echo "Exit code: ${EXIT_CODE}"
+echo "Log saved to: ${LOG_FILE}"
+echo "=========================================="
 
 exit ${EXIT_CODE}
+#     --dataset.repo_id="/dataset_rc_mm/share/datasets/modelscope.cn/Galaxea/Galaxea-Open-World-Dataset/lerobot_decompressed/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part1/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part3/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part4/*,/dataset_rc_mm/share/datasets/ml-site.cdn-apple.com/egodex_lerobot_gr00t/part5/*,/dataset_rc_mm/share/datasets/modelscope.cn/agibot_world/agibot_world_beta_gripper_top_head_lerobot_gr00t/agibotworld/*,/dataset_rc_mm/share/datasets/huggingface.co/nvidia/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/*" \

@@ -93,7 +93,7 @@ class MetricsTracker:
         num_frames: int,
         num_episodes: int,
         metrics: dict[str, AverageMeter],
-        accelerator,
+        accelerator = None,
         initial_tokens: int = 0,
         initial_step: int = 0
     ):
@@ -128,11 +128,11 @@ class MetricsTracker:
             
         add_tokens = num_token
 
-        add_step_all_proc = self.accelerator.gather(torch.tensor(add_steps).cuda())
-        add_steps = add_step_all_proc.sum().detach().cpu().item()
+        # add_step_all_proc = self.accelerator.gather(torch.tensor(add_steps).cuda())
+        # add_steps = add_step_all_proc.sum().detach().cpu().item()
 
-        add_tokens_all_proc = self.accelerator.gather(torch.tensor(add_tokens).cuda())
-        add_tokens = add_tokens_all_proc.sum().detach().cpu().item()
+        # add_tokens_all_proc = self.accelerator.gather(torch.tensor(add_tokens).cuda())
+        # add_tokens = add_tokens_all_proc.sum().detach().cpu().item()
         
         self.tokens += add_tokens
         self.steps += add_steps

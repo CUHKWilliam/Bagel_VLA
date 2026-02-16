@@ -1,22 +1,22 @@
-MODEL_SIZE=7
+MODEL_SIZE=15
 TOKEN_NUM=300000000000000000
 
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --config_file accelerate_config_single_node.yaml \
 src/lerobot/scripts/train_dist.py \
---dataset.repo_id="/dataset_rc_mm/share/datasets/huggingface.co/nvidia/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/*" \
+--dataset.repo_id="/dataset_rc_mm/share/datasets/huggingface.co/nvidia/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/gr1_unified.PnPBottleToCabinetClose" \
 --policy.model_size=$MODEL_SIZE \
 --dataset.token_num=$TOKEN_NUM \
---output_dir="./outputs/train/formal_train_scratch_gr00t" \
+--output_dir="./outputs/train/formal_train_scratch_gr00t_gr1_unified.PnPBottleToCabinetClose/" \
 --policy.push_to_hub=false \
 --policy.repo_id="lerobot/pi0" \
---eval_freq=20000000 \
---save_freq=1000 \
---job_name="formal_train_scratch_gr00t" \
+--eval_freq=2000000000 \
+--save_freq=3000 \
+--job_name="formal_train_scratch_gr00t_gr1_unified.PnPBottleToCabinetClose" \
 --wandb.project="exp_formal" \
 --policy.use_ref false \
 --policy.type="pi0" \
 --resume true \
---config_path="./outputs/train/formal_train_scratch_gr00t/checkpoints/last/pretrained_model/train_config.json"
+--config_path="./outputs/train/formal_train_scratch_gr00t_gr1_unified.PnPBottleToCabinetClose/checkpoints/00000075000/pretrained_model/train_config.json"
 
 # --dataset.repo_id="/dataset_rc_mm/share/datasets/modelscope.cn/agibot_world/agibot_world_beta_gripper_top_head_lerobot_gr00t/agibotworld/*,/publicdata-sh/huggingface.co/datasets/IPEC-COMMUNITY/*,/dataset_rc_mm/share/datasets/modelscope.cn/Galaxea/Galaxea-Open-World-Dataset/lerobot_decompressed/*"
 #--dataset.video_repo_id="/mnt/data/dataset/something-something-v2,/mnt/data/dataset/ego4d" \

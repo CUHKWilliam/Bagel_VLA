@@ -147,7 +147,6 @@ def make_policy(
     kwargs = {}
     cfg.dataset_stats = ds_stats
     kwargs["config"] = cfg
-
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).

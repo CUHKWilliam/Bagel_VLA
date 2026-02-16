@@ -107,7 +107,7 @@ class ConcatDatasetWithIndex(Dataset):
             length += len(ds)
         return length
 
-def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(cfg: TrainPipelineConfig, rank) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -131,6 +131,7 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
                 cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
             )
             delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+            print("rank:", rank)
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
@@ -140,8 +141,10 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
                 use_ref=cfg.policy.use_ref,
+                rank=rank
             )
             stats = dataset.stats
+            all_datasets.append(dataset)
             # if cfg.dataset.use_imagenet_stats:
             #     for key in dataset.meta.camera_keys:
             #         for stats_type, stats in IMAGENET_STATS.items():
@@ -167,7 +170,7 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
                     video_backend=cfg.dataset.video_backend,
                     episodes=cfg.dataset.episodes,
                     use_ref=cfg.policy.use_ref,
-                    accelerator=accelerator,
+                    rank=rank,
                 )
                 for a_dataset in dataset._datasets:
                     ds_meta = LeRobotDatasetMetadata(a_dataset.repo_id, root=a_dataset.root, revision=a_dataset.revision)
@@ -184,10 +187,9 @@ def make_dataset(cfg: TrainPipelineConfig, accelerator=None) -> LeRobotDataset |
                 video_backend=cfg.dataset.video_backend,
                 episodes=cfg.dataset.episodes,
                 use_ref=cfg.policy.use_ref,
-                accelerator=accelerator,
+                rank=rank,
             )
             stats = dataset_for_stats.stats
-           
             # dataset.meta = copy.deepcopy(dataset._datasets[0].meta)
             # if cfg.dataset.use_imagenet_stats:
             #     for a_dataset in dataset._datasets:

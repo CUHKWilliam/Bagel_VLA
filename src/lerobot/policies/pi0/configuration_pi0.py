@@ -40,8 +40,8 @@ class PI0Config(PreTrainedConfig):
     )
 
     # Shorter state and action vectors will be padded
-    max_state_dim: int = 32
-    max_action_dim: int = 32
+    max_state_dim: int = 50
+    max_action_dim: int = 50
     action_dim: int = 7
     use_ref: bool = True
 
@@ -64,7 +64,7 @@ class PI0Config(PreTrainedConfig):
     tokenizer_max_length: int = 48
 
     # Projector
-    proj_width: int = 1024
+    proj_width: int = 3584
 
     # Decoding
     num_steps: int = 10
@@ -141,7 +141,7 @@ class PI0Config(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> None:
-        return None
+        return list(range(self.chunk_size))
 
     @property
     def action_delta_indices(self) -> list:
